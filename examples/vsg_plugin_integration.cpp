@@ -157,7 +157,7 @@ public:
         childOptions->paths.push_back(directoryOf(path));
 
         osgVerse::SceneIR ir;
-        if (!osgVerse::readSceneIR(path, ir)) return vsg::ref_ptr<vsg::Object>();
+        if (!osgVerse::readSceneIR(path.string(), ir)) return vsg::ref_ptr<vsg::Object>();
 
         vsg_ir::VsgSceneBuilder builder(childOptions, pagedLodRatio);
         osgVerse::buildScene(ir, builder);
@@ -269,7 +269,7 @@ int main(int argc, char** argv)
     // Viewer
     // -----------------------------------------------------------------------
     vsg::ref_ptr<vsg::WindowTraits> traits = vsg::WindowTraits::create();
-    traits->windowTitle = "generic_osgwrappers (paging) - " + filename;
+    traits->windowTitle = "generic_osgwrappers (paging) - " + filename.string();
     traits->debugLayer = false;
 
     vsg::ref_ptr<vsg::Viewer> viewer = vsg::Viewer::create();
