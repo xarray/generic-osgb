@@ -1,32 +1,31 @@
-# Prerequisites
-*.d
+# 构建目录与产物
+build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
 
-# Compiled Object files
-*.slo
-*.lo
+# 编译中间文件
 *.o
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
 *.a
 *.lib
-
-# Executables
+*.so
+*.dll
+*.dylib
 *.exe
-*.out
-*.app
+*.pdb
+*.ilk
+
+# 日志与临时输出
+*.log
+out.txt
+err.txt
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
