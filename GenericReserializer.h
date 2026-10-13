@@ -82,7 +82,8 @@ namespace osgVerse
         // by endObject(), so a visitor can create/annotate the object.
         virtual void arrayData(int components, const std::vector<double>& values) {}
         virtual void primitiveData(int mode, unsigned int first, unsigned int count,
-                                   const std::vector<unsigned int>& indices) {}
+                                   const std::vector<unsigned int>& indices,
+                                   const std::vector<unsigned int>& lengths) {}
         virtual void imageData(const std::string& fileName, int origin,
                                int width, int height, int depth,
                                int internalFormat, int pixelFormat, int dataType,

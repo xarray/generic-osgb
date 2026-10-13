@@ -100,10 +100,15 @@ struct IRObject
     // PRIMITIVE payload
     int primType;            // osg PrimitiveSet type id (ID_DRAWARRAYS, ID_DRAWELEMENTS_* ...)
     int primMode;            // GL mode (GL_TRIANGLES ...)
-    unsigned int primCount;  // DrawArrays: count; DrawElements: number of indices
+    unsigned int primCount;  // DrawArrays: count; DrawElements: number of indices;
+                             // DrawArrayLengths: total vertex count (sum of lengths)
     unsigned int primFirst;  // DrawArrays: first index
     int primIndexBytes;      // DrawElements: index element size in bytes (0 for DrawArrays)
     std::vector<unsigned int> primIndices;
+    // DrawArrayLengths only: each entry is an independent run of the mode's
+    // primitive (a GL_TRIANGLE_STRIP run restarts at every length), so the runs
+    // must be expanded separately instead of as one long primitive.
+    std::vector<unsigned int> primLengths;
 
     // VectorSerializer payload (an osg::Array's or DrawElements' "vector" data)
     std::string vectorToken;              // element type token, e.g. "RW_VEC3F"

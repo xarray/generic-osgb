@@ -136,7 +136,8 @@ namespace
 
         IntLookup& primType = tables["PrimitiveType"];
         primType.add("DrawArrays", ID_DRAWARRAYS);
-        primType.add("DrawArrayLengths", ID_DRAWARRAY_LENGTH);
+        primType.add("DrawArraysLength", ID_DRAWARRAY_LENGTH);
+        primType.add("DrawArrayLengths", ID_DRAWARRAY_LENGTH);  // tolerant alias
         primType.add("DrawElementsUByte", ID_DRAWELEMENTS_UBYTE);
         primType.add("DrawElementsUShort", ID_DRAWELEMENTS_USHORT);
         primType.add("DrawElementsUInt", ID_DRAWELEMENTS_UINT);
@@ -1341,7 +1342,7 @@ ObjectTypeAndID InputStream::readPrimitiveSet(InputUserData& ud)
     if (record) ud.notifyBeginObject(osgClass, std::to_string(primId));
 
     unsigned int first = 0, count = 0;
-    std::vector<unsigned int> indices;
+    std::vector<unsigned int> indices, lengths;
     switch (type.get())
     {
     case ID_DRAWARRAYS:
@@ -1352,10 +1353,18 @@ ObjectTypeAndID InputStream::readPrimitiveSet(InputUserData& ud)
     }
     case ID_DRAWARRAY_LENGTH:
     {
+        // Layout (see osgDB::OutputStream::writePrimitiveSet): mode, first, size, {lengths}
+        int f = 0; *this >> f;
+        first = (unsigned int)f;
+
         unsigned int numPrimitives = 0;
         *this >> numPrimitives >> BEGIN_BRACKET;
         for (unsigned int i = 0; i < numPrimitives; ++i)
-        { unsigned int v; *this >> v; if (record) indices.push_back(v); }
+        {
+            unsigned int v = 0; *this >> v;
+            if (record) lengths.push_back(v);
+            count += v;  // total vertex count of the concatenated length runs
+        }
         *this >> END_BRACKET;
         break;
     }
@@ -1402,7 +1411,7 @@ ObjectTypeAndID InputStream::readPrimitiveSet(InputUserData& ud)
 
     if (record)
     {
-        ud.notifyPrimitiveData(mode.get(), first, count, indices);
+        ud.notifyPrimitiveData(mode.get(), first, count, indices, lengths);
         ud.notifyEndObject();
     }
 
@@ -1749,9 +1758,10 @@ void InputUserData::notifyArrayData(int components, const std::vector<double>& v
 }
 
 void InputUserData::notifyPrimitiveData(int mode, unsigned int first, unsigned int count,
-                                        const std::vector<unsigned int>& indices)
+                                        const std::vector<unsigned int>& indices,
+                                        const std::vector<unsigned int>& lengths)
 {
-    if (_visitor) _visitor->primitiveData(mode, first, count, indices);
+    if (_visitor) _visitor->primitiveData(mode, first, count, indices, lengths);
 }
 
 void InputUserData::notifyImageData(const std::string& fileName, int origin,

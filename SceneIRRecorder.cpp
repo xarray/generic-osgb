@@ -76,12 +76,14 @@ namespace
         }
 
         void primitiveData(int mode, unsigned int first, unsigned int count,
-                           const std::vector<unsigned int>& indices) override
+                           const std::vector<unsigned int>& indices,
+                           const std::vector<unsigned int>& lengths) override
         {
             int cur = current(); if (cur < 0) return;
             IRObject& o = _ir.objects[cur];
             o.primMode = mode; o.primFirst = first; o.primCount = count;
             o.primIndices = indices;
+            o.primLengths = lengths;
         }
 
         void imageData(const std::string& fileName, int origin,

@@ -65,22 +65,45 @@ add_test(NAME reserializing_test
          COMMAND reserializing_test ${CMAKE_CURRENT_SOURCE_DIR}/../examples/osgemscripten/box.osgt)
 
 # ---------------------------------------------------------------------------
-# Engine-specific examples (each may pull in its own engine SDK).
-#   cmake -S . -B build -DENABLE_OSG_INTEGRATION=ON \
-#         -DOSG_INTEGRATION_ROOT=/path/to/osg-sdk      # contains include/ and lib/
+# Engine-specific examples (each may pull in its own engine SDK). Each engine is
+# enabled with -DENABLE_<ENGINE>=ON plus its -D<ENGINE>_ROOT=<sdk>.
+#   cmake -S . -B build -DENABLE_OSG=ON -DOSG_ROOT=/path/to/osg-sdk
+#   cmake -S . -B build -DENABLE_VSG=ON -DVSG_ROOT=/path/to/vsg-sdk
 # ---------------------------------------------------------------------------
-option(ENABLE_OSG_INTEGRATION "Build the OpenSceneGraph integration example" OFF)
-set(OSG_INTEGRATION_ROOT "" CACHE PATH "OpenSceneGraph SDK root (include/ + lib/)")
+option(ENABLE_OSG "Build the OpenSceneGraph integration example" OFF)
+set(OSG_ROOT "" CACHE PATH "OpenSceneGraph SDK root (include/ + lib/)")
 
-if(ENABLE_OSG_INTEGRATION)
-    if(NOT OSG_INTEGRATION_ROOT)
-        message(FATAL_ERROR "OSG_INTEGRATION_ROOT is required when ENABLE_OSG_INTEGRATION=ON")
+if(ENABLE_OSG)
+    if(NOT OSG_ROOT)
+        message(FATAL_ERROR "OSG_ROOT is required when ENABLE_OSG=ON")
     endif()
 
     add_executable(osg_integration examples/osg_integration.cpp)
-    target_include_directories(osg_integration PRIVATE ${OSG_INTEGRATION_ROOT}/include)
-    target_link_directories(osg_integration PRIVATE ${OSG_INTEGRATION_ROOT}/lib)
+    target_include_directories(osg_integration PRIVATE ${OSG_ROOT}/include)
+    target_link_directories(osg_integration PRIVATE ${OSG_ROOT}/lib)
     link_generic_library(osg_integration)
     target_link_libraries(osg_integration PRIVATE
         osgViewer osgGA osgDB osgUtil osg OpenThreads)
+endif()
+
+# ---------------------------------------------------------------------------
+# VulkanSceneGraph integration (uses the installed vsg / vsgXchange packages).
+# ---------------------------------------------------------------------------
+option(ENABLE_VSG "Build the VulkanSceneGraph integration example" OFF)
+set(VSG_ROOT "" CACHE PATH "VulkanSceneGraph SDK root (include/ + lib/cmake/)")
+
+if(ENABLE_VSG)
+    if(NOT VSG_ROOT)
+        message(FATAL_ERROR "VSG_ROOT is required when ENABLE_VSG=ON")
+    endif()
+
+    list(APPEND CMAKE_PREFIX_PATH
+        ${VSG_ROOT}/lib/cmake/vsg
+        ${VSG_ROOT}/lib/cmake/vsgXchange)
+    find_package(vsg REQUIRED)
+    find_package(vsgXchange REQUIRED)
+
+    add_executable(vsg_integration examples/vsg_integration.cpp)
+    link_generic_library(vsg_integration)
+    target_link_libraries(vsg_integration PRIVATE vsg::vsg vsgXchange::vsgXchange)
 endif()

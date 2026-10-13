@@ -129,17 +129,35 @@ Done.
 
 ### Engine examples
 
-Concrete engine adapters live under `examples/`; each example may pull in its own
-engine SDK and is off by default. The OpenSceneGraph "echo back" example rebuilds
-a real osg scene (through `osgDB::ObjectWrapperManager`) and renders it with
-`osgViewer`:
+Concrete engine adapters live under `examples/`; each one pulls in its own engine
+SDK and is disabled by default. All of them read the same neutral `SceneIR`, so
+they share one implementation strategy (create engine objects, then replay the
+recorded commands).
+
+Engines are enabled with `-DENABLE_<ENGINE>=ON` and their `-D<ENGINE>_ROOT=<sdk>`.
+
+**OpenSceneGraph** — rebuilds a real osg scene through
+`osgDB::ObjectWrapperManager` and renders it with `osgViewer`:
 
 ```bash
-cmake -S . -B build -DENABLE_OSG_INTEGRATION=ON \
-      -DOSG_INTEGRATION_ROOT=/path/to/osg-sdk     # contains include/ and lib/
+cmake -S . -B build -DENABLE_OSG=ON -DOSG_ROOT=/path/to/osg-sdk   # include/ + lib/
 cmake --build build
 ./build/osg_integration <file.osgt|file.osgb>          # render
 ./build/osg_integration <file.osgt|file.osgb> --list   # rebuild + report only
+```
+
+**VulkanSceneGraph (VSG)** — rebuilds the IR into VSG's default scene graph
+(`vsg::Group` / `vsg::MatrixTransform` / `vsg::LOD` / `vsg::Switch`, with
+`vsg::VertexIndexDraw` / `vsg::VertexDraw` and a Phong graphics pipeline built
+per geometry) and renders it with `vsg::Viewer`. Textures are loaded through
+`vsgXchange` (SGI `.rgb` textures, which `vsgXchange` has no reader for, are
+decoded locally), and the camera is framed from the computed scene bounds:
+
+```bash
+cmake -S . -B build -DENABLE_VSG=ON -DVSG_ROOT=/path/to/vsg-sdk  # include/ + lib/cmake/
+cmake --build build
+./build/vsg_integration <file.osgt|file.osgb>          # render
+./build/vsg_integration <file.osgt|file.osgb> --list   # rebuild + report only
 ```
 
 ### Directory layout
@@ -168,10 +186,17 @@ directory to the library sources in `CMakeLists.txt`.
 
 ## 4. Embedding and rendering in 3D engines
 
-> To be filled in.
+Each engine adapter implements `ISceneBuilder` and turns the neutral `SceneIR`
+into that engine's scene graph. `examples/` currently contains:
 
-* OSG (as echo back) -
-* VSG (VulkanSceneGraph) -
+* **OSG (echo back)** — `osg_integration.cpp`: rebuilds real osg objects through
+  `osgDB::ObjectWrapperManager` and renders with `osgViewer`.
+* **VSG (VulkanSceneGraph)** — `vsg_integration.cpp`: rebuilds VSG nodes/commands
+  with a Phong pipeline and renders with `vsg::Viewer`.
+* **Null** — `null_integration.cpp`: zero-dependency, prints the IR contents.
+
+Planned / to be filled in:
+
 * Web (three.js / WebGL / WebGPU) —
 * Babylon.js —
 * Godot —

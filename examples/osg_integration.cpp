@@ -11,7 +11,7 @@
 // and commands are dispatched through a name -> handler table, so adding support
 // for a new class/property is just adding a handler function and one table line.
 //
-// Build: -DENABLE_OSG_INTEGRATION=ON -DOSG_INTEGRATION_ROOT=<sdk>
+// Build: -DENABLE_OSG=ON -DOSG_ROOT=<sdk>
 // Usage: osg_integration <file.osgt|file.osgb> [--list]
 
 #include <osg/Object>
@@ -510,6 +510,15 @@ protected:
 
     static void buildPrimitive(osg::Object* o, const osgVerse::IRObject& obj)
     {
+        if (osg::DrawArrayLengths* dal = dynamic_cast<osg::DrawArrayLengths*>(o))
+        {
+            // DrawArrayLengths keeps its own per-run lengths; setFirst/Count are
+            // not used by it.
+            dal->setMode((osg::PrimitiveSet::Mode)obj.primMode);
+            dal->setFirst(obj.primFirst);
+            dal->assign(obj.primLengths.begin(), obj.primLengths.end());
+            return;
+        }
         if (osg::DrawArrays* da = dynamic_cast<osg::DrawArrays*>(o))
         {
             da->setMode((osg::PrimitiveSet::Mode)obj.primMode);

@@ -635,7 +635,8 @@ public:
     void notifyEndObject();
     void notifyArrayData(int components, const std::vector<double>& values);
     void notifyPrimitiveData(int mode, unsigned int first, unsigned int count,
-                             const std::vector<unsigned int>& indices);
+                             const std::vector<unsigned int>& indices,
+                             const std::vector<unsigned int>& lengths);
     void notifyImageData(const std::string& fileName, int origin,
                          int width, int height, int depth,
                          int internalFormat, int pixelFormat, int dataType,
