@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <climits>
+#include <mutex>
 #include <stdarg.h>
 
 using namespace osgVerse;
@@ -335,6 +336,14 @@ UserLookupTableProxy::LookupTable& UserLookupTableProxy::instance()
 
 IntLookup& UserLookupTableProxy::get(const char* name)
 {
+    // The registry is process-wide and the first lookup of a name inserts it
+    // (the USER_READ_FUNC tables register themselves lazily). Callers may read
+    // several files at once (e.g. VSG's DatabasePager uses 4 threads), so a
+    // bare operator[] would let two readers reallocate/rebalance the map
+    // concurrently and corrupt the heap. std::map nodes are stable, hence the
+    // reference handed out here remains valid for readers that already hold it.
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lock(s_mutex);
     return instance()[name];
 }
 

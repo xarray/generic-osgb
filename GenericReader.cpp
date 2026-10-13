@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <cstring>
+#include <mutex>
 
 // OSG_HEADER_LOW / OSG_HEADER_HIGH constants are provided by GenericInputStream.h (const unsigned int)
 
@@ -43,6 +44,16 @@ InputIterator* readInputIterator(std::istream& fin)
 
 ObjectTypeAndID readObjectFile(std::istream& fin, InputUserData& ud, bool forceAscii)
 {
+    // The Rewrapper/BaseSerializer objects are registered once and shared by every
+    // read; they carry mutable scratch buffers (`_v0`, `_values`, `_elements`,
+    // `_valueMap`, ...) that a traversal writes to. Concurrent traversals - e.g.
+    // several files pulled in at once by a paging reader such as VSG's
+    // DatabasePager - would corrupt those buffers (and the heap), so the wrapper
+    // traversal is serialized through this single choke point. Each traversal is
+    // non-recursive with respect to this function, so a plain mutex suffices.
+    static std::mutex s_readMutex;
+    std::lock_guard<std::mutex> lock(s_readMutex);
+
     ObjectTypeAndID result;
     result._type.clear();
     result._id.clear();

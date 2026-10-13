@@ -30,6 +30,7 @@
 #include <vsgXchange/all.h>
 
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -112,12 +113,22 @@ public:
     // Diagnostics: the child file names discovered per file while reading. Filled
     // for every read (root and paged children), so it ends up describing the whole
     // paging tree that was touched.
+    //
+    // VSG's DatabasePager reads from several threads at once
+    // (vsg::ResourceHints::numDatabasePagerReadThreads, 4 by default), so this
+    // list must be guarded: an unguarded push_back from concurrent readers
+    // reallocates while another thread appends, which corrupts the heap.
     struct ReadInfo
     {
         vsg::Path file;
         std::vector<std::string> children;
     };
-    mutable std::vector<ReadInfo> pagingTree;
+
+    std::vector<ReadInfo> readInfos() const
+    {
+        std::lock_guard<std::mutex> lock(_pagingMutex);
+        return _pagingTree;
+    }
 
     bool getFeatures(Features& features) const override
     {
@@ -156,11 +167,17 @@ public:
             for (std::map<int, std::vector<std::string> >::const_iterator it = files.begin();
                  it != files.end(); ++it)
                 info.children.insert(info.children.end(), it->second.begin(), it->second.end());
-            pagingTree.push_back(info);
+
+            std::lock_guard<std::mutex> lock(_pagingMutex);
+            _pagingTree.push_back(info);
         }
 
         return builder.root();
     }
+
+protected:
+    mutable std::mutex _pagingMutex;
+    mutable std::vector<ReadInfo> _pagingTree;
 };
 
 int main(int argc, char** argv)
@@ -233,11 +250,12 @@ int main(int argc, char** argv)
     {
         // The child FileName list each paged node exposed, and what was read.
         std::cout << "Paging tree (file -> child FileName list):" << std::endl;
-        for (size_t i = 0; i < osgbReader->pagingTree.size(); ++i)
+        const std::vector<OsgbReaderWriter::ReadInfo> infos = osgbReader->readInfos();
+        for (size_t i = 0; i < infos.size(); ++i)
         {
-            std::cout << "  " << osgbReader->pagingTree[i].file << " ->";
-            for (size_t k = 0; k < osgbReader->pagingTree[i].children.size(); ++k)
-                std::cout << " " << osgbReader->pagingTree[i].children[k];
+            std::cout << "  " << infos[i].file << " ->";
+            for (size_t k = 0; k < infos[i].children.size(); ++k)
+                std::cout << " " << infos[i].children[k];
             std::cout << std::endl;
         }
         return 0;
