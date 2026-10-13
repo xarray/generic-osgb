@@ -1,4 +1,4 @@
-# 构建目录与产物
+# Build directories and artifacts
 build/
 build-*/
 cmake-build-*/
@@ -8,7 +8,7 @@ cmake_install.cmake
 Makefile
 CTestTestfile.cmake
 
-# 编译中间文件
+# Compiler intermediates
 *.o
 *.obj
 *.a
@@ -20,12 +20,12 @@ CTestTestfile.cmake
 *.pdb
 *.ilk
 
-# 日志与临时输出
+# Logs and temporary output
 *.log
 out.txt
 err.txt
 
-# 编辑器 / 系统
+# Editors / OS
 .vscode/
 .idea/
 .DS_Store

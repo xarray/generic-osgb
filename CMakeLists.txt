@@ -1,4 +1,4 @@
-# generic_wrappers：零 osg 依赖的 .osgt/.osgb 序列化层
+# generic_wrappers: a zero-osg-dependency .osgt/.osgb serialization layer
 cmake_minimum_required(VERSION 3.10)
 
 project(osgVerseGenericWrappers)
@@ -26,8 +26,9 @@ add_executable(reserializing_test
     reserializing_test.cpp
 )
 
-# generic_osg/*.cpp 通过 REGISTER_OBJECT_WRAPPER 静态注册 rewrapper，
-# MSVC/GCC 默认会丢弃未被引用的静态库目标文件，需强制全量包含。
+# generic_osg/*.cpp statically registers rewrappers through REGISTER_OBJECT_WRAPPER.
+# MSVC/GCC drop unreferenced static-library object files by default, so the archive
+# must be force-included in full to keep those registrars alive.
 if(MSVC)
     target_link_libraries(reserializing_test PRIVATE osgVerseGenericReserializer)
     target_link_options(reserializing_test PRIVATE "/WHOLEARCHIVE:osgVerseGenericReserializer")
