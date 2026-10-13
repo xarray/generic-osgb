@@ -160,6 +160,23 @@ cmake --build build
 ./build/vsg_integration <file.osgt|file.osgb> --list   # rebuild + report only
 ```
 
+The adapter itself lives in `examples/vsg_scene_builder.h`, so it can also be
+registered as a `vsg::ReaderWriter`. `vsg_plugin_integration` does exactly that,
+which turns `osg::PagedLOD` / `osg::ProxyNode` into `vsg::PagedLOD` and lets VSG's
+own `DatabasePager` stream the child `.osgb` files through the generic reader:
+
+```bash
+./build/vsg_plugin_integration <root.osgb> --list              # report only
+./build/vsg_plugin_integration <root.osgb> --load-levels 2     # preload 2 levels
+./build/vsg_plugin_integration <root.osgb> --lod-ratio 0.25    # pager switch ratio
+./build/vsg_plugin_integration <root.osgb> -f 300              # run 300 frames
+```
+
+Images embedded inside an `.osgb` (osg's "inline file" storage) are decoded from
+memory through `vsgXchange`, so databases that carry their JPEG/PNG textures
+inside the tile files render without any texture files on disk. See §4 for how
+the two VSG examples differ.
+
 ### Directory layout
 
 ```
@@ -186,14 +203,97 @@ directory to the library sources in `CMakeLists.txt`.
 
 ## 4. Embedding and rendering in 3D engines
 
-Each engine adapter implements `ISceneBuilder` and turns the neutral `SceneIR`
-into that engine's scene graph. `examples/` currently contains:
+An engine adapter is a single class implementing `ISceneBuilder` (`SceneIR.h`):
+
+```cpp
+struct ISceneBuilder
+{
+    virtual void onObject (const IRObject&, int index) = 0;                    // create the engine object
+    virtual void onCommand(const IRObject&, int index, const IRCommand&) = 0;  // apply one property / command
+    virtual void finish() {}
+};
+```
+
+`buildScene(ir, builder)` replays the recorded read order into it. An adapter never
+sees the file format — only object class names, typed arguments and object
+references — so supporting a new engine means writing one of these classes.
+
+`examples/` currently contains:
 
 * **OSG (echo back)** — `osg_integration.cpp`: rebuilds real osg objects through
-  `osgDB::ObjectWrapperManager` and renders with `osgViewer`.
-* **VSG (VulkanSceneGraph)** — `vsg_integration.cpp`: rebuilds VSG nodes/commands
-  with a Phong pipeline and renders with `vsg::Viewer`.
-* **Null** — `null_integration.cpp`: zero-dependency, prints the IR contents.
+  `osgDB::ObjectWrapperManager` and renders with `osgViewer`. Handy as the
+  reference for what osg itself would produce from the same file.
+* **VulkanSceneGraph** — the adapter lives in `vsg_scene_builder.h` and is shared
+  by two front ends: `vsg_integration.cpp` and `vsg_plugin_integration.cpp`.
+* **Null** — `null_integration.cpp`: zero-dependency, prints what the IR contains
+  (class/command histograms, scene tree, data payload summaries).
+
+### VSG: `vsg_integration` vs `vsg_plugin_integration`
+
+Both front ends use the same adapter (`examples/vsg_scene_builder.h` — geometry,
+material, texture, `vsg::LOD` and `vsg::PagedLOD` conversion), so they produce the
+same scene graph and the same image. The difference is **how the file is reached**:
+
+* `vsg_integration` reads the file itself: `readSceneIR()` → `VsgSceneBuilder` →
+  `buildScene()`, and hands the result straight to `vsg::Viewer`. VSG's IO layer is
+  never involved, so `vsg::read()` has no reader for `.osgb`/`.osgt`. A
+  `PagedLOD`/`ProxyNode` is still rebuilt as a `vsg::PagedLOD`, but VSG's
+  `DatabasePager` cannot resolve the child format and logs
+  `Failed to read ... Tile_1_L15_0.osgb`.
+* `vsg_plugin_integration` wraps that same adapter in a `vsg::ReaderWriter`
+  (`OsgbReaderWriter`) and adds it to `vsg::Options`, then loads the root through
+  `vsg::read()`. Because VSG's own IO can resolve the format now, its
+  `DatabasePager` streams the children in on demand:
+
+  ```
+  osg::PagedLOD / osg::ProxyNode
+      -> vsg::PagedLOD{ filename = child .osgb, children[1] = in-memory fallback, options = ... }
+      -> DatabasePager: vsg::read(filename, plod->options)
+      -> OsgbReaderWriter::read() -> readSceneIR() -> VsgSceneBuilder
+      -> merged back in as children[0]
+  ```
+
+| Aspect | `vsg_integration` | `vsg_plugin_integration` |
+|---|---|---|
+| Reads via | `readSceneIR()` directly | `vsg::read()` through the registered `vsg::ReaderWriter` |
+| PagedLOD / ProxyNode | node is built, but the pager cannot load the child format | children are streamed in by VSG's `DatabasePager`, or synchronously with `--load-levels N` |
+| Extra options | — | `--load-levels N`, `--lod-ratio R`, `--max-paged-lod N`, `-f/--frames` |
+| Reports | IR objects/events, rebuilt objects, draws, paged LODs, missing images, unhandled properties | root, paged LODs, the child `FileName` list discovered per file, preloaded count |
+| Render graph | `createRenderGraphForView` + explicit `CommandGraph` | `createCommandGraphForView` + `ResourceHints` on the root (pre-sizes Vulkan resources for the paged database) |
+
+`--list` on a paged database shows the child `FileName` list that each
+`osg::PagedLOD` / `osg::ProxyNode` exposed (see §3 for the build/run commands):
+
+```
+$ vsg_plugin_integration Tile_1.osgb --list --load-levels 4
+Root        : vsg::PagedLOD
+PagedLODs   : 6
+Paging tree (file -> child FileName list):
+  Tile_1.osgb            -> Tile_1_L15_0.osgb
+  Tile_1_L15_0.osgb      -> Tile_1_L16_00.osgb
+  Tile_1_L16_00.osgb     -> Tile_1_L17_000.osgb
+  Tile_1_L17_000.osgb    -> Tile_1_L18_0000t3.osgb
+  Tile_1_L18_0000t3.osgb -> Tile_1_L19_00000t3.osgb Tile_1_L19_00010t3.osgb
+```
+
+Adapter notes / current gaps (the full list of osg classes that are *not*
+converted, with the reason for each, is in the header comment of
+`examples/vsg_scene_builder.h`):
+
+* `osg::Program`/`Shader`/`Uniform` (custom GLSL), `osg::TexGen`,
+  `TexEnv`/`TexEnvCombine`, scene-graph lights, clip planes, cube maps and
+  `osg::ShapeDrawable` are not translated, so those assets keep the default Phong
+  look (or draw nothing, for parametric shapes).
+* Textures follow osg's row layout: osg stores image rows bottom-up
+  (`osg::Image`'s default `BOTTOM_LEFT`, and its jpeg/png plugins flip the file
+  rows on load), while `vsgXchange` returns top-down rows. Decoded images are
+  flipped back (`toOsgRowOrder()`) so osg's texture coordinates land on the same
+  texels instead of every texture coming out mirrored.
+* `osg::TexGen` (e.g. `SPHERE_MAP`), cube maps and custom `Shader`/`Program`
+  assets are not converted yet, so those few assets (cow's environment map,
+  `cube_mapped_torus`, the `glsl_*` samples) render without their special effect.
+* The Phong pipeline is created per geometry, so the first pass ignores `StateSet`
+  inheritance and per-geometry state overrides.
 
 Planned / to be filled in:
 

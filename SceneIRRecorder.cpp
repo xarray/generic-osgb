@@ -89,12 +89,12 @@ namespace
         void imageData(const std::string& fileName, int origin,
                        int width, int height, int depth,
                        int internalFormat, int pixelFormat, int dataType,
-                       int packing, int allocationMode,
+                       int packing, int allocationMode, int decision,
                        const std::vector<unsigned char>& pixels) override
         {
             int cur = current(); if (cur < 0) return;
             IRObject& o = _ir.objects[cur];
-            o.fileName = fileName; o.origin = origin;
+            o.fileName = fileName; o.origin = origin; o.imageDecision = decision;
             o.width = width; o.height = height; o.depth = depth;
             o.internalFormat = internalFormat; o.pixelFormat = pixelFormat; o.dataType = dataType;
             o.packing = packing; o.allocationMode = allocationMode;

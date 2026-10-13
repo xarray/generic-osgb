@@ -71,10 +71,8 @@ const int ID_DRAWELEMENTS_UBYTE  = 52;
 const int ID_DRAWELEMENTS_USHORT = 53;
 const int ID_DRAWELEMENTS_UINT   = 54;
 
-const int IMAGE_INLINE_DATA = 0;
-const int IMAGE_INLINE_FILE = 1;
-const int IMAGE_EXTERNAL    = 2;
-const int IMAGE_WRITE_OUT   = 3;
+// Image storage decisions (IMAGE_USE_FILE / IMAGE_INLINE_DATA / IMAGE_INLINE_FILE)
+// are provided by SceneIR.h, which this header includes.
 
 const unsigned int OSG_HEADER_LOW  = 0x6C910EA1;
 const unsigned int OSG_HEADER_HIGH = 0x1AFB4545;
@@ -640,7 +638,7 @@ public:
     void notifyImageData(const std::string& fileName, int origin,
                          int width, int height, int depth,
                          int internalFormat, int pixelFormat, int dataType,
-                         int packing, int allocationMode,
+                         int packing, int allocationMode, int decision,
                          const std::vector<unsigned char>& pixels);
 
     // Scene-tree recording (called from InputStream::readObject)

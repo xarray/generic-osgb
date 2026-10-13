@@ -106,4 +106,10 @@ if(ENABLE_VSG)
     add_executable(vsg_integration examples/vsg_integration.cpp)
     link_generic_library(vsg_integration)
     target_link_libraries(vsg_integration PRIVATE vsg::vsg vsgXchange::vsgXchange)
+
+    # Same adapter, but registered as a vsg::ReaderWriter so VSG's DatabasePager
+    # can dynamically page osgb/osgt PagedLOD / ProxyNode children.
+    add_executable(vsg_plugin_integration examples/vsg_plugin_integration.cpp)
+    link_generic_library(vsg_plugin_integration)
+    target_link_libraries(vsg_plugin_integration PRIVATE vsg::vsg vsgXchange::vsgXchange)
 endif()

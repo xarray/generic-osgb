@@ -20,6 +20,15 @@
 namespace osgVerse
 {
 
+// How an osg::Image stored its pixels (mirrors osgDB's image write decision).
+enum ImageDecision
+{
+    IMAGE_INLINE_DATA = 0,   // pixelData holds raw pixels (internalFormat/pixelFormat/dataType)
+    IMAGE_INLINE_FILE = 1,   // pixelData holds an embedded encoded file (decode via fileName's ext)
+    IMAGE_USE_FILE    = 2,   // fileName references an external file on disk
+    IMAGE_WRITE_OUT   = 3
+};
+
 // ---------------------------------------------------------------------------
 // A single typed command argument. Covers every argument shape emitted by the
 // generic_osg wrapper read functions and by the serializer property channel.
@@ -92,10 +101,11 @@ struct IRObject
     std::vector<unsigned char> arrayData;
 
     // IMAGE payload
-    std::string fileName;    // external file reference (decision == USE_FILE)
+    int imageDecision;       // IMAGE_USE_FILE / IMAGE_INLINE_DATA / IMAGE_INLINE_FILE
+    std::string fileName;    // external file reference (decision == IMAGE_USE_FILE)
     int origin, width, height, depth;
     int internalFormat, pixelFormat, dataType, packing, allocationMode;
-    std::vector<unsigned char> pixelData;
+    std::vector<unsigned char> pixelData;   // inline raw pixels, or an embedded encoded file
 
     // PRIMITIVE payload
     int primType;            // osg PrimitiveSet type id (ID_DRAWARRAYS, ID_DRAWELEMENTS_* ...)
@@ -118,7 +128,7 @@ struct IRObject
     IRObject()
         : parent(-1), offset(0), payload(NONE),
           arrayType(0), arrayNumComponents(0), arrayComponentBytes(0), arrayNumElements(0),
-          origin(0), width(0), height(0), depth(0),
+          imageDecision(IMAGE_USE_FILE), origin(0), width(0), height(0), depth(0),
           internalFormat(0), pixelFormat(0), dataType(0), packing(0), allocationMode(0),
           primType(0), primMode(0), primCount(0), primFirst(0), primIndexBytes(0),
           vectorComponents(0)

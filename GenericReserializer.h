@@ -87,7 +87,7 @@ namespace osgVerse
         virtual void imageData(const std::string& fileName, int origin,
                                int width, int height, int depth,
                                int internalFormat, int pixelFormat, int dataType,
-                               int packing, int allocationMode,
+                               int packing, int allocationMode, int decision,
                                const std::vector<unsigned char>& pixels) {}
 
         void push(const std::string& n) { _propertyList.push(n); }

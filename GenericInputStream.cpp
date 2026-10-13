@@ -1560,7 +1560,7 @@ ObjectTypeAndID InputStream::readImage(InputUserData& ud)
     {
         ud.notifyImageData(fileName, origin, imgS, imgT, imgR,
                            internalFormat, pixelFormat, dataType,
-                           packing, allocationMode, pixels);
+                           packing, allocationMode, decision, pixels);
         ud.notifyEndObject();
     }
 
@@ -1767,12 +1767,12 @@ void InputUserData::notifyPrimitiveData(int mode, unsigned int first, unsigned i
 void InputUserData::notifyImageData(const std::string& fileName, int origin,
                                     int width, int height, int depth,
                                     int internalFormat, int pixelFormat, int dataType,
-                                    int packing, int allocationMode,
+                                    int packing, int allocationMode, int decision,
                                     const std::vector<unsigned char>& pixels)
 {
     if (_visitor) _visitor->imageData(fileName, origin, width, height, depth,
                                       internalFormat, pixelFormat, dataType,
-                                      packing, allocationMode, pixels);
+                                      packing, allocationMode, decision, pixels);
 }
 
 void InputUserData::emitCommand(const char* name, const std::vector<IRArg>& args)
