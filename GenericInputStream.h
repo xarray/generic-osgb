@@ -376,6 +376,15 @@ public:
     ObjectTypeAndID(const std::string& type = "", const std::string& id = "")
         : _type(type), _id(id) {}
     bool valid() const { return !_type.empty(); }
+
+    // Handle-like conveniences so ported wrapper code that used a ref_ptr keeps
+    // compiling: the value acts as a smart pointer to itself.
+    operator bool() const { return valid(); }
+    ObjectTypeAndID* get() { return this; }
+    const ObjectTypeAndID* get() const { return this; }
+    ObjectTypeAndID* operator->() { return this; }
+    const ObjectTypeAndID* operator->() const { return this; }
+
     std::string _type;
     std::string _id;
 };

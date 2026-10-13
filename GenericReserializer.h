@@ -346,11 +346,37 @@ namespace osgVerse
 #define REMOVED_ASSOCIATE(STR) wrapper.markAssociateAsRemoved(STR);
 #define REMOVE_SERIALIZER(PROP) wrapper.markSerializerAsRemoved(#PROP);
 
+// ---------------------------------------------------------------------------
+// Aliases for the extra spellings used by the non-core osg serializers, so the
+// upstream wrapper sources port over without per-file edits. The scoped-enum /
+// type arguments are only used for scripting on the osg side and are dropped.
+// ---------------------------------------------------------------------------
+#define BEGIN_ENUM_SERIALIZER3(TYPE, PROP, DEF) wrapper.beginEnumSerializer(#PROP, #DEF)
+#define BEGIN_ENUM_SERIALIZER4(TYPE, PROP, DEF) wrapper.beginEnumSerializer(#PROP, #DEF)
+#define ADD_ENUM_CLASS_VALUE(TYPE, VALUE) wrapper.addEnumValue(#VALUE)
+#define ADD_ENUM_CLASS_VALUE_CAST(TYPE, VALUE) wrapper.addEnumValue(#VALUE)
+#define ADD_OBJECT_SERIALIZER_NO_SET(PROP, TYPE, DEF) wrapper.addObjectSerializer(#PROP, #TYPE)
+#define ADD_IMAGE_SERIALIZER_NO_SET(PROP, TYPE, DEF) wrapper.addImageSerializer(#PROP, #TYPE)
+#define ADD_UINT_SERIALIZER_NO_SET(PROP, DEF) wrapper.addValueSerializer<unsigned int>(#PROP, DEF)
+#define ADD_INT_SERIALIZER_NO_SET(PROP, DEF) wrapper.addValueSerializer<int>(#PROP, DEF)
+#define ADD_STRING_SERIALIZER_NO_SET(PROP, DEF) wrapper.addStringSerializer(#PROP, DEF)
+#define USE_SERIALIZER_WRAPPER(NAME) USE_OBJECT_WRAPPER(NAME)
+
+// Scripting-only hooks (osgDB::MethodObject tables). The generic layer has no
+// scripting engine, so they expand to nothing; the matching MethodObject struct
+// definitions are dropped while porting.
+#define ADD_METHOD(NAME)
+#define ADD_METHOD_OBJECT(NAME, CLASS)
+#define SET_USAGE(VALUE)
+
 #define REGISTER_OBJECT_WRAPPER(NAME, CREATEINSTANCE, CLASS, ASSOCIATES) \
     extern "C" void rewrapper_serializer_##NAME(void) {} \
     extern void rewrapper_propfunc_##NAME(Rewrapper& wrapper); \
     static osgVerse::RegisterWrapperProxy rewrapper_proxy_##NAME(#CLASS, ASSOCIATES, &rewrapper_propfunc_##NAME); \
     void rewrapper_propfunc_##NAME(Rewrapper& wrapper)
+// Variant used by a few osg wrappers that also pass the class name explicitly.
+#define REGISTER_OBJECT_WRAPPER2(NAME, CREATEINSTANCE, CLASS, CLASSNAME, ASSOCIATES) \
+    REGISTER_OBJECT_WRAPPER(NAME, CREATEINSTANCE, CLASS, ASSOCIATES)
 #define USE_OBJECT_WRAPPER(NAME) \
     extern "C" void rewrapper_serializer_##NAME(void); \
     static osgVerse::RegisterWrapperFunctionProxy rewrapperfunc_proxy_##NAME(rewrapper_serializer_##NAME);

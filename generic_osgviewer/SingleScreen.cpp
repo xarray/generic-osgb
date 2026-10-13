@@ -1,0 +1,10 @@
+#include <GenericReserializer.h>
+using namespace osgVerse;
+
+REGISTER_OBJECT_WRAPPER( osgViewer_SingleScreen,
+                         new osgViewer::SingleScreen,
+                         osgViewer::SingleScreen,
+                         "osg::Object osgViewer::ViewConfig osgViewer::SingleScreen" )
+{
+    ADD_UINT_SERIALIZER( ScreenNum, 0u);
+}

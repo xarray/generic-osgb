@@ -17,6 +17,15 @@ endif()
 # ---------------------------------------------------------------------------
 file(GLOB GENERIC_OSG_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/generic_osg/*.cpp")
 
+# The remaining osg libraries, ported one directory per library.
+set(GENERIC_EXTRA_LIBS osgterrain osganimation osgparticle osgvolume osgsim
+    osgmanipulator osgshadow osgui osgga osgfx osgviewer osgtext osgutil)
+set(GENERIC_EXTRA_SOURCES "")
+foreach(_lib ${GENERIC_EXTRA_LIBS})
+    file(GLOB _sources "${CMAKE_CURRENT_SOURCE_DIR}/generic_${_lib}/*.cpp")
+    list(APPEND GENERIC_EXTRA_SOURCES ${_sources})
+endforeach()
+
 add_library(osgVerseGenericReserializer STATIC
     GenericReserializer.cpp
     GenericInputStream.cpp
@@ -24,6 +33,7 @@ add_library(osgVerseGenericReserializer STATIC
     SceneIR.cpp
     SceneIRRecorder.cpp
     ${GENERIC_OSG_SOURCES}
+    ${GENERIC_EXTRA_SOURCES}
 )
 target_include_directories(osgVerseGenericReserializer PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

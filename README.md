@@ -45,12 +45,12 @@ This project re-implements that mechanism standalone:
   detected from the first 8 header bytes; `.osgt` is parsed as text, `.osgb` is
   read as raw binary (byte order handled via `setByteSwap`).
 * **Output** — reading does **not** construct real OSG objects. `readObject()`
-  walks the stream and records the result into `InputUserData`: today a scene
-  tree (`TreeNode` = class name, id, file offset, parent/child links) plus
-  property hooks (`ud.add(...)`) that a host adapter can override to rebuild the
-  graph in another engine. In this generic build `InputUserData::add/get` are
-  compile-time-compatible stubs, so only the scene tree is materialised — enough
-  to inspect, validate, or reserialize an asset while staying dependency-free.
+  walks the stream and records the result into `InputUserData`: a scene tree
+  (`TreeNode` = class name, id, file offset, parent/child links) plus explicit
+  commands (`ud.add("setXxx", ...)` / `ud.add("addChild", ...)`) emitted by the
+  user-serializer `read*` functions. Those commands are forwarded to the optional
+  `SerializerVisitor` and/or recorded into a neutral `SceneIR` (see `SceneIR.h`)
+  that a host adapter can replay to rebuild the graph in another engine.
 
 Entry point (`GenericReader.h`):
 
@@ -117,7 +117,7 @@ Output of `reserializing_test` reports the number of registered rewrappers, the
 top-level object class, and the parsed scene tree:
 
 ```
-Rewrappers: 232
+Rewrappers: 461
 Top object  : osg::MatrixTransform (id=1)
 Scene tree  : 519 objects read
 - osg::MatrixTransform (id=1, @0x19)
@@ -146,9 +146,23 @@ cmake --build build
 
 ```
 .                       dependency-free core (reader, IR, math layer)
-generic_osg/            one wrapper per osg class (statically registered)
+generic_osg/            one wrapper per osg core class
+generic_osgterrain/     osgTerrain      generic_osganimation/  osgAnimation
+generic_osgparticle/    osgParticle     generic_osgvolume/     osgVolume
+generic_osgsim/         osgSim          generic_osgmanipulator/ osgManipulator
+generic_osgshadow/      osgShadow       generic_osgui/         osgUI
+generic_osgga/          osgGA           generic_osgfx/         osgFX
+generic_osgviewer/      osgViewer       generic_osgtext/       osgText
+generic_osgutil/        osgUtil
 examples/               example programs (null_integration, osg_integration, ...)
 ```
+
+Every osg library shipped with OpenSceneGraph has been ported this way: create
+`generic_osg<lib>/`, take the wrappers from
+`OpenSceneGraph/src/osgWrappers/serializers/osg<lib>/`, include
+`GenericReserializer.h`, turn the `read*` functions into the
+`ud.add("setXxx", ...)` form, drop the `check*`/`write*` helpers, then add the
+directory to the library sources in `CMakeLists.txt`.
 
 ---
 

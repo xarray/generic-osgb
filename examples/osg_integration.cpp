@@ -7,7 +7,9 @@
 //
 // OsgSceneBuilder implements ISceneBuilder: it instantiates osg objects through
 // OSG's own ObjectWrapperManager (no hand-written factory table) and replays the
-// recorded properties/commands, rebuilding a renderable scene graph.
+// recorded properties/commands, rebuilding a renderable scene graph. Properties
+// and commands are dispatched through a name -> handler table, so adding support
+// for a new class/property is just adding a handler function and one table line.
 //
 // Build: -DENABLE_OSG_INTEGRATION=ON -DOSG_INTEGRATION_ROOT=<sdk>
 // Usage: osg_integration <file.osgt|file.osgb> [--list]
@@ -39,6 +41,7 @@
 #include <osg/io_utils>
 
 #include <iostream>
+#include <initializer_list>
 #include <map>
 #include <set>
 #include <vector>
@@ -62,6 +65,8 @@ namespace
 class OsgSceneBuilder : public osgVerse::ISceneBuilder
 {
 public:
+    OsgSceneBuilder() { registerHandlers(); }
+
     void onObject(const osgVerse::IRObject& obj, int index) override
     {
         osg::ref_ptr<osg::Object> o = createInstance(obj.className);
@@ -80,24 +85,7 @@ public:
 
         // Primitive sets from the legacy compact reader.
         if (!obj.primIndices.empty() || obj.primMode != 0 || obj.primCount != 0)
-        {
-            if (osg::DrawArrays* da = dynamic_cast<osg::DrawArrays*>(o.get()))
-            {
-                da->setMode((osg::PrimitiveSet::Mode)obj.primMode);
-                da->setFirst(obj.primFirst); da->setCount(obj.primCount);
-            }
-            else if (osg::DrawElements* de = dynamic_cast<osg::DrawElements*>(o.get()))
-            {
-                de->setMode((osg::PrimitiveSet::Mode)obj.primMode);
-                de->resizeElements((unsigned int)obj.primIndices.size());
-                if (osg::DrawElementsUShort* d = dynamic_cast<osg::DrawElementsUShort*>(de))
-                { for (size_t i = 0; i < obj.primIndices.size(); ++i) (*d)[i] = (unsigned short)obj.primIndices[i]; }
-                else if (osg::DrawElementsUInt* d = dynamic_cast<osg::DrawElementsUInt*>(de))
-                { for (size_t i = 0; i < obj.primIndices.size(); ++i) (*d)[i] = obj.primIndices[i]; }
-                else if (osg::DrawElementsUByte* d = dynamic_cast<osg::DrawElementsUByte*>(de))
-                { for (size_t i = 0; i < obj.primIndices.size(); ++i) (*d)[i] = (unsigned char)obj.primIndices[i]; }
-            }
-        }
+            buildPrimitive(o.get(), obj);
 
         // Images (external file name or inline pixel data).
         if (osg::Image* img = dynamic_cast<osg::Image*>(o.get()))
@@ -109,7 +97,7 @@ public:
     {
         osg::Object* target = (index >= 0 && index < (int)_objs.size()) ? _objs[index].get() : NULL;
         if (!target) return;
-        dispatch(target, obj, cmd.name, cmd.args);
+        dispatch(target, cmd.name, cmd.args);
     }
 
     osg::Node* root() const { return dynamic_cast<osg::Node*>(_root); }
@@ -118,6 +106,367 @@ public:
     const std::map<std::string, unsigned int>& unhandled() const { return _unhandled; }
 
 protected:
+    typedef std::vector<osgVerse::IRArg> Args;
+
+    // A property/command handler: returns true when it applied the value.
+    typedef bool (OsgSceneBuilder::*Handler)(osg::Object*, const std::string&, const Args&);
+
+    void on(Handler h, std::initializer_list<const char*> names)
+    { for (const char* n : names) _handlers[n] = h; }
+
+    // -----------------------------------------------------------------------
+    // Dispatch table: one line per property/command name.
+    // -----------------------------------------------------------------------
+    void registerHandlers()
+    {
+        on(&OsgSceneBuilder::handleAddChild, { "addChild" });
+        on(&OsgSceneBuilder::handleAddDrawable, { "addDrawable" });
+        on(&OsgSceneBuilder::handleStateSet, { "setMode", "setTextureMode", "setAttribute",
+                                               "setTextureAttribute", "addUniform" });
+        on(&OsgSceneBuilder::handleMaterial, { "setAmbient", "setDiffuse", "setSpecular",
+                                               "setEmission", "setShininess" });
+        on(&OsgSceneBuilder::handleProgram, { "setShaderSource", "setParameter",
+                                              "addBindAttribLocation", "addShader" });
+        on(&OsgSceneBuilder::handleLOD, { "setRange", "Center", "Radius" });
+        on(&OsgSceneBuilder::handlePoint, { "Size", "MaxSize", "FadeThresholdSize",
+                                            "DistanceAttenuation" });
+        on(&OsgSceneBuilder::handleDrawableFlags, { "UseDisplayList", "SupportsDisplayList" });
+        on(&OsgSceneBuilder::handleObjectProp, { "Name", "DataVariance", "UserDataContainer" });
+        on(&OsgSceneBuilder::handleMatrix, { "Matrix" });
+        on(&OsgSceneBuilder::handlePrimitive, { "Mode", "NumInstances", "First", "Count" });
+        on(&OsgSceneBuilder::handleArrayProp, { "Binding", "Normalize", "PreserveDataType" });
+        on(&OsgSceneBuilder::handleVector, { "vector" });
+        on(&OsgSceneBuilder::handleTexture, { "WrapS", "WrapT", "WrapR", "FilterMin", "FilterMag",
+                                              "InternalFormat", "Image", "setWrap", "setFilter",
+                                              "setInternalFormat", "setSourceFormat",
+                                              "setSourceType", "setSwizzle" });
+        on(&OsgSceneBuilder::handleGeometryArray, { "VertexArray", "NormalArray", "ColorArray",
+                                                    "SecondaryColorArray", "FogCoordArray",
+                                                    "setVertexArray", "setNormalArray",
+                                                    "setColorArray", "setSecondaryColorArray",
+                                                    "setFogCoordArray", "setTexCoordArray",
+                                                    "setVertexAttribArray" });
+        on(&OsgSceneBuilder::handleGeometryList, { "PrimitiveSetList", "TexCoordArrayList",
+                                                   "VertexAttribArrayList" });
+        on(&OsgSceneBuilder::handleNodeState, { "StateSet", "setStateSet", "setInitialBound" });
+    }
+
+    void dispatch(osg::Object* o, const std::string& name, const Args& args)
+    {
+        // An absent object reference (e.g. an empty vertex-attrib slot, which the
+        // writer still emits) means "nothing to set": ignore it silently.
+        if (!args.empty() && args[0].kind == osgVerse::IRArg::OBJECT && args[0].objId.empty())
+            return;
+
+        std::map<std::string, Handler>::const_iterator itr = _handlers.find(name);
+        if (itr == _handlers.end() || !(this->*(itr->second))(o, name, args))
+            ++_unhandled[name];
+    }
+
+    // -----------------------------------------------------------------------
+    // Handlers
+    // -----------------------------------------------------------------------
+    bool handleAddChild(osg::Object* o, const std::string&, const Args& args)
+    {
+        osg::Group* g = dynamic_cast<osg::Group*>(o);
+        osg::Node* n = dynamic_cast<osg::Node*>(resolve(arg(args, 0)));
+        if (!g || !n) return false;
+        g->addChild(n); return true;
+    }
+
+    bool handleAddDrawable(osg::Object* o, const std::string&, const Args& args)
+    {
+        osg::Geode* g = dynamic_cast<osg::Geode*>(o);
+        osg::Drawable* d = dynamic_cast<osg::Drawable*>(resolve(arg(args, 0)));
+        if (!g || !d) return false;
+        g->addDrawable(d); return true;
+    }
+
+    bool handleStateSet(osg::Object* o, const std::string& name, const Args& args)
+    {
+        osg::StateSet* ss = dynamic_cast<osg::StateSet*>(o);
+        if (!ss) return false;
+        if (name == "setMode")
+            ss->setMode(glEnum(args, 0), (osg::StateAttribute::GLModeValue)uArg(args, 1));
+        else if (name == "setTextureMode")
+            ss->setTextureMode(uArg(args, 0), glEnum(args, 1),
+                               (osg::StateAttribute::GLModeValue)uArg(args, 2));
+        else if (name == "setAttribute")
+        {
+            osg::StateAttribute* a = dynamic_cast<osg::StateAttribute*>(resolve(arg(args, 0)));
+            if (!a) return false;
+            ss->setAttribute(a, (osg::StateAttribute::OverrideValue)uArg(args, 1));
+        }
+        else if (name == "setTextureAttribute")
+        {
+            osg::StateAttribute* a = dynamic_cast<osg::StateAttribute*>(resolve(arg(args, 1)));
+            if (!a) return false;
+            ss->setTextureAttribute(uArg(args, 0), a,
+                                    (osg::StateAttribute::OverrideValue)uArg(args, 2));
+        }
+        else // addUniform
+        {
+            osg::Uniform* u = dynamic_cast<osg::Uniform*>(resolve(arg(args, 0)));
+            if (!u) return false;
+            ss->addUniform(u);
+        }
+        return true;
+    }
+
+    bool handleMaterial(osg::Object* o, const std::string& name, const Args& args)
+    {
+        osg::Material* m = dynamic_cast<osg::Material*>(o);
+        if (!m || args.size() < 2) return false;
+        osg::Material::Face face = (osg::Material::Face)iArg(args, 0);
+        if (name == "setShininess") { m->setShininess(face, (float)dArg(args, 1)); return true; }
+
+        osg::Vec4f c((float)args[1].v[0], (float)args[1].v[1],
+                     (float)args[1].v[2], (float)args[1].v[3]);
+        if (name == "setAmbient") m->setAmbient(face, c);
+        else if (name == "setDiffuse") m->setDiffuse(face, c);
+        else if (name == "setSpecular") m->setSpecular(face, c);
+        else m->setEmission(face, c);
+        return true;
+    }
+
+    bool handleProgram(osg::Object* o, const std::string& name, const Args& args)
+    {
+        if (name == "setShaderSource")
+        {
+            osg::Shader* s = dynamic_cast<osg::Shader*>(o);
+            if (!s || args.empty()) return false;
+            s->setShaderSource(args[0].s); return true;
+        }
+        osg::Program* p = dynamic_cast<osg::Program*>(o);
+        if (!p) return false;
+        if (name == "setParameter")
+        {
+            if (args.size() < 2) return false;
+            p->setParameter((GLint)iArg(args, 0), (GLint)iArg(args, 1)); return true;
+        }
+        if (name == "addBindAttribLocation")
+        {
+            if (args.size() < 2) return false;
+            p->addBindAttribLocation(args[0].s, uArg(args, 1)); return true;
+        }
+        osg::Shader* s = dynamic_cast<osg::Shader*>(resolve(arg(args, 0)));   // addShader
+        if (!s) return false;
+        p->addShader(s); return true;
+    }
+
+    bool handleLOD(osg::Object* o, const std::string& name, const Args& args)
+    {
+        osg::LOD* l = dynamic_cast<osg::LOD*>(o);
+        if (!l || args.empty()) return false;
+        if (name == "setRange")
+        {
+            if (args.size() < 3) return false;
+            l->setRange(uArg(args, 0), (float)dArg(args, 1), (float)dArg(args, 2)); return true;
+        }
+        if (name == "Center")
+        {
+            if (args[0].n < 3) return false;
+            l->setCenter(osg::Vec3d(args[0].v[0], args[0].v[1], args[0].v[2])); return true;
+        }
+        l->setRadius((float)dArg(args, 0)); return true;   // Radius
+    }
+
+    bool handlePoint(osg::Object* o, const std::string& name, const Args& args)
+    {
+        osg::Point* pt = dynamic_cast<osg::Point*>(o);
+        if (!pt || args.empty()) return false;
+        if (name == "DistanceAttenuation")
+        {
+            if (args[0].n < 3) return false;
+            pt->setDistanceAttenuation(osg::Vec3(args[0].v[0], args[0].v[1], args[0].v[2]));
+            return true;
+        }
+        if (name == "Size") pt->setSize((float)dArg(args, 0));
+        else if (name == "MaxSize") pt->setMaxSize((float)dArg(args, 0));
+        else pt->setFadeThresholdSize((float)dArg(args, 0));
+        return true;
+    }
+
+    bool handleDrawableFlags(osg::Object* o, const std::string& name, const Args& args)
+    {
+        osg::Drawable* d = dynamic_cast<osg::Drawable*>(o);
+        if (!d) return false;
+        bool v = !args.empty() && bArg(args, 0);
+        if (name == "UseDisplayList") d->setUseDisplayList(v);
+        else d->setSupportsDisplayList(v);
+        return true;
+    }
+
+    bool handleObjectProp(osg::Object* o, const std::string& name, const Args& args)
+    {
+        if (name == "Name") { o->setName(args.empty() ? std::string() : args[0].s); return true; }
+        if (name == "DataVariance")
+        {
+            osg::Object::DataVariance dv = osg::Object::UNSPECIFIED;
+            if (!args.empty() && args[0].s == "STATIC") dv = osg::Object::STATIC;
+            else if (!args.empty() && args[0].s == "DYNAMIC") dv = osg::Object::DYNAMIC;
+            o->setDataVariance(dv); return true;
+        }
+        osg::Object* udc = resolve(arg(args, 0));   // UserDataContainer
+        if (!udc) return false;
+        o->setUserDataContainer(dynamic_cast<osg::UserDataContainer*>(udc)); return true;
+    }
+
+    bool handleMatrix(osg::Object* o, const std::string&, const Args& args)
+    {
+        osg::MatrixTransform* mt = dynamic_cast<osg::MatrixTransform*>(o);
+        if (!mt || args.empty() || args[0].kind != osgVerse::IRArg::MATRIX) return false;
+        osg::Matrixd m; for (int i = 0; i < 16; ++i) m(i % 4, i / 4) = args[0].v[i];
+        mt->setMatrix(m); return true;
+    }
+
+    bool handlePrimitive(osg::Object* o, const std::string& name, const Args& args)
+    {
+        if (args.empty()) return false;
+        if (name == "Mode" || name == "NumInstances")
+        {
+            osg::PrimitiveSet* ps = dynamic_cast<osg::PrimitiveSet*>(o);
+            if (!ps) return false;
+            if (name == "Mode") ps->setMode((osg::PrimitiveSet::Mode)uArg(args, 0));
+            else ps->setNumInstances(iArg(args, 0));
+            return true;
+        }
+        osg::DrawArrays* da = dynamic_cast<osg::DrawArrays*>(o);
+        if (!da) return false;
+        if (name == "First") da->setFirst(iArg(args, 0)); else da->setCount(iArg(args, 0));
+        return true;
+    }
+
+    bool handleArrayProp(osg::Object* o, const std::string& name, const Args& args)
+    {
+        osg::Array* a = dynamic_cast<osg::Array*>(o);
+        if (!a) return false;
+        if (name == "Binding") a->setBinding(arrayBinding(args.empty() ? std::string() : args[0].s));
+        else if (name == "Normalize") a->setNormalize(!args.empty() && bArg(args, 0));
+        else a->setPreserveDataType(!args.empty() && bArg(args, 0));
+        return true;
+    }
+
+    bool handleVector(osg::Object*, const std::string&, const Args&)
+    { return true; }   // element data is applied in onObject()
+
+    bool handleTexture(osg::Object* o, const std::string& name, const Args& args)
+    {
+        if (name == "Image")
+        {
+            osg::Texture2D* t = dynamic_cast<osg::Texture2D*>(o);
+            osg::Image* img = dynamic_cast<osg::Image*>(resolve(arg(args, 0)));
+            if (!t || !img) return false;
+            t->setImage(img); return true;
+        }
+        osg::Texture* t = dynamic_cast<osg::Texture*>(o);
+        if (!t) return false;
+        if (name == "WrapS" || name == "WrapT" || name == "WrapR")
+        {
+            osg::Texture::WrapParameter p = (name == "WrapS") ? osg::Texture::WRAP_S :
+                (name == "WrapT" ? osg::Texture::WRAP_T : osg::Texture::WRAP_R);
+            t->setWrap(p, (osg::Texture::WrapMode)uArg(args, 0)); return true;
+        }
+        if (name == "FilterMin" || name == "FilterMag")
+        {
+            osg::Texture::FilterParameter p = (name == "FilterMin") ?
+                osg::Texture::MIN_FILTER : osg::Texture::MAG_FILTER;
+            t->setFilter(p, (osg::Texture::FilterMode)uArg(args, 0)); return true;
+        }
+        if (name == "InternalFormat" || name == "setInternalFormat")
+        { t->setInternalFormat(iArg(args, 0)); return true; }
+        if (name == "setWrap")
+        {
+            t->setWrap((osg::Texture::WrapParameter)uArg(args, 0),
+                       (osg::Texture::WrapMode)uArg(args, 1)); return true;
+        }
+        if (name == "setFilter")
+        {
+            t->setFilter((osg::Texture::FilterParameter)uArg(args, 0),
+                         (osg::Texture::FilterMode)uArg(args, 1)); return true;
+        }
+        if (name == "setSourceFormat") { t->setSourceFormat((GLint)iArg(args, 0)); return true; }
+        if (name == "setSourceType") { t->setSourceType((GLenum)uArg(args, 0)); return true; }
+        return true;   // setSwizzle: not needed for rendering
+    }
+
+    bool handleGeometryArray(osg::Object* o, const std::string& name, const Args& args)
+    {
+        osg::Geometry* g = dynamic_cast<osg::Geometry*>(o);
+        if (!g) return false;
+        if (name == "setTexCoordArray" || name == "setVertexAttribArray")
+        {
+            osg::Array* a = dynamic_cast<osg::Array*>(resolve(arg(args, 1)));
+            if (!a) return false;
+            if (name == "setTexCoordArray") g->setTexCoordArray(uArg(args, 0), a);
+            else g->setVertexAttribArray(uArg(args, 0), a);
+            return true;
+        }
+        osg::Array* a = dynamic_cast<osg::Array*>(resolve(arg(args, 0)));
+        if (!a) return false;
+        if (name == "VertexArray" || name == "setVertexArray") g->setVertexArray(a);
+        else if (name == "NormalArray" || name == "setNormalArray") g->setNormalArray(a);
+        else if (name == "ColorArray" || name == "setColorArray") g->setColorArray(a);
+        else if (name == "SecondaryColorArray" || name == "setSecondaryColorArray")
+            g->setSecondaryColorArray(a);
+        else g->setFogCoordArray(a);
+        return true;
+    }
+
+    bool handleGeometryList(osg::Object* o, const std::string& name, const Args& args)
+    {
+        osg::Geometry* g = dynamic_cast<osg::Geometry*>(o);
+        if (!g) return false;
+        if (name == "PrimitiveSetList")
+        {
+            for (size_t i = 0; i < args.size(); ++i)
+                if (osg::PrimitiveSet* ps = dynamic_cast<osg::PrimitiveSet*>(resolve(args[i])))
+                    g->addPrimitiveSet(ps);
+            return true;
+        }
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            osg::Array* a = dynamic_cast<osg::Array*>(resolve(args[i]));
+            if (!a) continue;
+            if (name == "TexCoordArrayList") g->setTexCoordArray((unsigned int)i, a);
+            else g->setVertexAttribArray((unsigned int)i, a);
+        }
+        return true;
+    }
+
+    bool handleNodeState(osg::Object* o, const std::string&, const Args& args)
+    {
+        // setInitialBound carries a bounding sphere (Node) or box (Drawable).
+        if (!args.empty() && (args[0].kind == osgVerse::IRArg::BSPHERE ||
+                              args[0].kind == osgVerse::IRArg::BBOX))
+        {
+            if (osg::Node* n = dynamic_cast<osg::Node*>(o))
+            {
+                if (args[0].kind != osgVerse::IRArg::BSPHERE) return false;
+                n->setInitialBound(osg::BoundingSphere(
+                    osg::Vec3d(args[0].v[0], args[0].v[1], args[0].v[2]), args[0].v[3]));
+                return true;
+            }
+            if (osg::Drawable* d = dynamic_cast<osg::Drawable*>(o))
+            {
+                if (args[0].kind != osgVerse::IRArg::BBOX) return false;
+                d->setInitialBound(osg::BoundingBox(
+                    osg::Vec3(args[0].v[0], args[0].v[1], args[0].v[2]),
+                    osg::Vec3(args[0].v[3], args[0].v[4], args[0].v[5])));
+                return true;
+            }
+            return false;
+        }
+        osg::StateSet* ss = dynamic_cast<osg::StateSet*>(resolve(arg(args, 0)));   // StateSet
+        if (!ss) return false;
+        if (osg::Node* n = dynamic_cast<osg::Node*>(o)) { n->setStateSet(ss); return true; }
+        if (osg::Drawable* d = dynamic_cast<osg::Drawable*>(o)) { d->setStateSet(ss); return true; }
+        return false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
     static osg::Object* createInstanceImpl(const std::string& className)
     {
         osgDB::ObjectWrapperManager* m = osgDB::Registry::instance()->getObjectWrapperManager();
@@ -136,405 +485,19 @@ protected:
         return itr != _byKey.end() ? itr->second : NULL;
     }
 
-    static const osgVerse::IRArg& arg(const std::vector<osgVerse::IRArg>& a, size_t i)
+    static const osgVerse::IRArg& arg(const Args& a, size_t i)
     { static osgVerse::IRArg empty; return i < a.size() ? a[i] : empty; }
-    static GLenum glEnum(const std::vector<osgVerse::IRArg>& a, size_t i)
+    static GLenum glEnum(const Args& a, size_t i)
     { const osgVerse::IRArg& v = arg(a, i); return (GLenum)(v.kind == osgVerse::IRArg::INT ? v.i : v.u); }
-    static unsigned int uArg(const std::vector<osgVerse::IRArg>& a, size_t i)
+    static unsigned int uArg(const Args& a, size_t i)
     { const osgVerse::IRArg& v = arg(a, i); return (unsigned int)(v.kind == osgVerse::IRArg::INT ? v.i : v.u); }
-    static int iArg(const std::vector<osgVerse::IRArg>& a, size_t i)
+    static int iArg(const Args& a, size_t i)
     { const osgVerse::IRArg& v = arg(a, i); return (int)(v.kind == osgVerse::IRArg::INT ? v.i : (long long)v.u); }
-    static double dArg(const std::vector<osgVerse::IRArg>& a, size_t i)
+    static double dArg(const Args& a, size_t i)
     { const osgVerse::IRArg& v = arg(a, i); return v.kind == osgVerse::IRArg::DOUBLE ? v.d : (double)v.i; }
-    static bool bArg(const std::vector<osgVerse::IRArg>& a, size_t i)
+    static bool bArg(const Args& a, size_t i)
     { const osgVerse::IRArg& v = arg(a, i);
       return v.kind == osgVerse::IRArg::BOOL ? v.b : (v.kind == osgVerse::IRArg::UINT ? v.u != 0 : v.i != 0); }
-
-    void dispatch(osg::Object* o, const osgVerse::IRObject& obj,
-                  const std::string& name, const std::vector<osgVerse::IRArg>& args)
-    {
-        // An absent object reference (e.g. an empty vertex-attrib slot, which the
-        // writer still emits) means "nothing to set": ignore it silently.
-        if (!args.empty() && args[0].kind == osgVerse::IRArg::OBJECT && args[0].objId.empty())
-            return;
-
-        // ---- node / drawable composition ----
-        if (name == "addChild")
-        {
-            osg::Group* g = dynamic_cast<osg::Group*>(o);
-            osg::Node* n = dynamic_cast<osg::Node*>(resolve(arg(args, 0)));
-            if (g && n) g->addChild(n); else ++_unhandled[name];
-        }
-        else if (name == "addDrawable")
-        {
-            osg::Geode* g = dynamic_cast<osg::Geode*>(o);
-            osg::Drawable* d = dynamic_cast<osg::Drawable*>(resolve(arg(args, 0)));
-            if (g && d) g->addDrawable(d); else ++_unhandled[name];
-        }
-        // ---- state set ----
-        else if (name == "setMode")
-        {
-            osg::StateSet* ss = dynamic_cast<osg::StateSet*>(o);
-            if (ss) ss->setMode(glEnum(args, 0), (osg::StateAttribute::GLModeValue)uArg(args, 1));
-            else ++_unhandled[name];
-        }
-        else if (name == "setTextureMode")
-        {
-            osg::StateSet* ss = dynamic_cast<osg::StateSet*>(o);
-            if (ss) ss->setTextureMode(uArg(args, 0), glEnum(args, 1),
-                                       (osg::StateAttribute::GLModeValue)uArg(args, 2));
-            else ++_unhandled[name];
-        }
-        else if (name == "setAttribute")
-        {
-            osg::StateSet* ss = dynamic_cast<osg::StateSet*>(o);
-            osg::StateAttribute* a = dynamic_cast<osg::StateAttribute*>(resolve(arg(args, 0)));
-            if (ss && a) ss->setAttribute(a, (osg::StateAttribute::OverrideValue)uArg(args, 1));
-            else ++_unhandled[name];
-        }
-        else if (name == "setTextureAttribute")
-        {
-            osg::StateSet* ss = dynamic_cast<osg::StateSet*>(o);
-            osg::StateAttribute* a = dynamic_cast<osg::StateAttribute*>(resolve(arg(args, 1)));
-            if (ss && a) ss->setTextureAttribute(uArg(args, 0), a,
-                                                 (osg::StateAttribute::OverrideValue)uArg(args, 2));
-            else ++_unhandled[name];
-        }
-        else if (name == "addUniform")
-        {
-            osg::StateSet* ss = dynamic_cast<osg::StateSet*>(o);
-            osg::Uniform* u = dynamic_cast<osg::Uniform*>(resolve(arg(args, 0)));
-            if (ss && u) ss->addUniform(u); else ++_unhandled[name];
-        }
-        // ---- material ----
-        else if (name == "setAmbient" || name == "setDiffuse" || name == "setSpecular" ||
-                 name == "setEmission")
-        {
-            osg::Material* m = dynamic_cast<osg::Material*>(o);
-            if (m && args.size() >= 2)
-            {
-                osg::Material::Face face = (osg::Material::Face)iArg(args, 0);
-                osg::Vec4f c((float)args[1].v[0], (float)args[1].v[1],
-                             (float)args[1].v[2], (float)args[1].v[3]);
-                if (name == "setAmbient") m->setAmbient(face, c);
-                else if (name == "setDiffuse") m->setDiffuse(face, c);
-                else if (name == "setSpecular") m->setSpecular(face, c);
-                else m->setEmission(face, c);
-            }
-            else ++_unhandled[name];
-        }
-        else if (name == "setShininess")
-        {
-            osg::Material* m = dynamic_cast<osg::Material*>(o);
-            if (m && args.size() >= 2) m->setShininess((osg::Material::Face)iArg(args, 0), (float)dArg(args, 1));
-            else ++_unhandled[name];
-        }
-        // ---- program / shader ----
-        else if (name == "setShaderSource")
-        {
-            osg::Shader* s = dynamic_cast<osg::Shader*>(o);
-            if (s && !args.empty()) s->setShaderSource(args[0].s); else ++_unhandled[name];
-        }
-        else if (name == "setParameter")
-        {
-            osg::Program* p = dynamic_cast<osg::Program*>(o);
-            if (p && args.size() >= 2) p->setParameter((GLint)iArg(args, 0), (GLint)iArg(args, 1));
-            else ++_unhandled[name];
-        }
-        else if (name == "addBindAttribLocation")
-        {
-            osg::Program* p = dynamic_cast<osg::Program*>(o);
-            if (p && args.size() >= 2) p->addBindAttribLocation(args[0].s, uArg(args, 1));
-            else ++_unhandled[name];
-        }
-        // ---- point / drawable flags ----
-        else if (name == "Size" || name == "MaxSize" || name == "FadeThresholdSize")
-        {
-            osg::Point* pt = dynamic_cast<osg::Point*>(o);
-            if (pt)
-            {
-                if (name == "Size") pt->setSize((float)dArg(args, 0));
-                else if (name == "MaxSize") pt->setMaxSize((float)dArg(args, 0));
-                else pt->setFadeThresholdSize((float)dArg(args, 0));
-            }
-            else ++_unhandled[name];
-        }
-        else if (name == "DistanceAttenuation")
-        {
-            osg::Point* pt = dynamic_cast<osg::Point*>(o);
-            if (pt && !args.empty() && args[0].n >= 3)
-                pt->setDistanceAttenuation(osg::Vec3(args[0].v[0], args[0].v[1], args[0].v[2]));
-            else ++_unhandled[name];
-        }
-        else if (name == "UseDisplayList" || name == "SupportsDisplayList")
-        {
-            osg::Drawable* d = dynamic_cast<osg::Drawable*>(o);
-            if (d)
-            {
-                if (name == "UseDisplayList") d->setUseDisplayList(!args.empty() && bArg(args, 0));
-                else d->setSupportsDisplayList(!args.empty() && bArg(args, 0));
-            }
-            else ++_unhandled[name];
-        }
-        else if (name == "addShader")
-        {
-            osg::Program* p = dynamic_cast<osg::Program*>(o);
-            osg::Shader* s = dynamic_cast<osg::Shader*>(resolve(arg(args, 0)));
-            if (p && s) p->addShader(s); else ++_unhandled[name];
-        }
-        // ---- LOD ----
-        else if (name == "setRange")
-        {
-            osg::LOD* l = dynamic_cast<osg::LOD*>(o);
-            if (l && args.size() >= 3) l->setRange(uArg(args, 0), (float)dArg(args, 1), (float)dArg(args, 2));
-            else ++_unhandled[name];
-        }
-        // ---- object / node properties ----
-        else if (name == "Name") { o->setName(args.empty() ? std::string() : args[0].s); }
-        else if (name == "DataVariance")
-        {
-            osg::Object::DataVariance dv = osg::Object::UNSPECIFIED;
-            if (!args.empty() && args[0].s == "STATIC") dv = osg::Object::STATIC;
-            else if (!args.empty() && args[0].s == "DYNAMIC") dv = osg::Object::DYNAMIC;
-            o->setDataVariance(dv);
-        }
-        else if (name == "UserDataContainer")
-        {
-            osg::Object* udc = resolve(arg(args, 0));
-            if (udc) o->setUserDataContainer(dynamic_cast<osg::UserDataContainer*>(udc));
-        }
-        else if (name == "Matrix")
-        {
-            osg::MatrixTransform* mt = dynamic_cast<osg::MatrixTransform*>(o);
-            if (mt && !args.empty() && args[0].kind == osgVerse::IRArg::MATRIX)
-            { osg::Matrixd m; for (int i = 0; i < 16; ++i) m(i % 4, i / 4) = args[0].v[i]; mt->setMatrix(m); }
-            else ++_unhandled[name];
-        }
-        else if (name == "Center")
-        {
-            osg::LOD* l = dynamic_cast<osg::LOD*>(o);
-            if (l && !args.empty() && args[0].n >= 3)
-                l->setCenter(osg::Vec3d(args[0].v[0], args[0].v[1], args[0].v[2]));
-            else ++_unhandled[name];
-        }
-        else if (name == "Radius")
-        {
-            osg::LOD* l = dynamic_cast<osg::LOD*>(o);
-            if (l && !args.empty()) l->setRadius((float)dArg(args, 0)); else ++_unhandled[name];
-        }
-        // ---- primitive set ----
-        else if (name == "Mode")
-        {
-            osg::PrimitiveSet* ps = dynamic_cast<osg::PrimitiveSet*>(o);
-            if (ps && !args.empty()) ps->setMode((osg::PrimitiveSet::Mode)uArg(args, 0)); else ++_unhandled[name];
-        }
-        else if (name == "NumInstances")
-        {
-            osg::PrimitiveSet* ps = dynamic_cast<osg::PrimitiveSet*>(o);
-            if (ps && !args.empty()) ps->setNumInstances(iArg(args, 0)); else ++_unhandled[name];
-        }
-        else if (name == "First")
-        {
-            osg::DrawArrays* da = dynamic_cast<osg::DrawArrays*>(o);
-            if (da && !args.empty()) da->setFirst(iArg(args, 0)); else ++_unhandled[name];
-        }
-        else if (name == "Count")
-        {
-            osg::DrawArrays* da = dynamic_cast<osg::DrawArrays*>(o);
-            if (da && !args.empty()) da->setCount(iArg(args, 0)); else ++_unhandled[name];
-        }
-        // ---- array ----
-        else if (name == "Binding")
-        {
-            osg::Array* a = dynamic_cast<osg::Array*>(o);
-            if (a) a->setBinding(arrayBinding(args.empty() ? std::string() : args[0].s)); else ++_unhandled[name];
-        }
-        else if (name == "Normalize")
-        {
-            osg::Array* a = dynamic_cast<osg::Array*>(o);
-            if (a) a->setNormalize(!args.empty() && bArg(args, 0)); else ++_unhandled[name];
-        }
-        else if (name == "PreserveDataType")
-        {
-            osg::Array* a = dynamic_cast<osg::Array*>(o);
-            if (a) a->setPreserveDataType(!args.empty() && bArg(args, 0)); else ++_unhandled[name];
-        }
-        else if (name == "vector") { /* already applied in onObject() */ }
-        // ---- texture ----
-        else if (name == "WrapS" || name == "WrapT" || name == "WrapR")
-        {
-            osg::Texture* t = dynamic_cast<osg::Texture*>(o);
-            if (t)
-            {
-                osg::Texture::WrapParameter p = (name == "WrapS") ? osg::Texture::WRAP_S :
-                    (name == "WrapT" ? osg::Texture::WRAP_T : osg::Texture::WRAP_R);
-                t->setWrap(p, (osg::Texture::WrapMode)uArg(args, 0));
-            }
-            else ++_unhandled[name];
-        }
-        else if (name == "FilterMin" || name == "FilterMag")
-        {
-            osg::Texture* t = dynamic_cast<osg::Texture*>(o);
-            if (t)
-            {
-                osg::Texture::FilterParameter p =
-                    (name == "FilterMin") ? osg::Texture::MIN_FILTER : osg::Texture::MAG_FILTER;
-                t->setFilter(p, (osg::Texture::FilterMode)uArg(args, 0));
-            }
-            else ++_unhandled[name];
-        }
-        else if (name == "InternalFormat")
-        {
-            osg::Texture* t = dynamic_cast<osg::Texture*>(o);
-            if (t) t->setInternalFormat(iArg(args, 0)); else ++_unhandled[name];
-        }
-        else if (name == "Image")
-        {
-            osg::Texture2D* t = dynamic_cast<osg::Texture2D*>(o);
-            osg::Image* img = dynamic_cast<osg::Image*>(resolve(arg(args, 0)));
-            if (t && img) t->setImage(img);   // images are not recorded yet -> skipped
-        }
-        // ---- geometry arrays ----
-        else if (name == "VertexArray" || name == "NormalArray" || name == "ColorArray" ||
-                 name == "SecondaryColorArray" || name == "FogCoordArray")
-        {
-            osg::Geometry* g = dynamic_cast<osg::Geometry*>(o);
-            osg::Array* a = dynamic_cast<osg::Array*>(resolve(arg(args, 0)));
-            if (g && a)
-            {
-                if (name == "VertexArray") g->setVertexArray(a);
-                else if (name == "NormalArray") g->setNormalArray(a);
-                else if (name == "ColorArray") g->setColorArray(a);
-                else if (name == "SecondaryColorArray") g->setSecondaryColorArray(a);
-                else g->setFogCoordArray(a);
-            }
-            else ++_unhandled[name];
-        }
-        else if (name == "PrimitiveSetList")
-        {
-            osg::Geometry* g = dynamic_cast<osg::Geometry*>(o);
-            if (g)
-            {
-                for (size_t i = 0; i < args.size(); ++i)
-                {
-                    osg::PrimitiveSet* ps = dynamic_cast<osg::PrimitiveSet*>(resolve(args[i]));
-                    if (ps) g->addPrimitiveSet(ps);
-                }
-            }
-            else ++_unhandled[name];
-        }
-        else if (name == "TexCoordArrayList" || name == "VertexAttribArrayList")
-        {
-            osg::Geometry* g = dynamic_cast<osg::Geometry*>(o);
-            if (g)
-            {
-                for (size_t i = 0; i < args.size(); ++i)
-                {
-                    osg::Array* a = dynamic_cast<osg::Array*>(resolve(args[i]));
-                    if (!a) continue;
-                    if (name == "TexCoordArrayList") g->setTexCoordArray((unsigned int)i, a);
-                    else g->setVertexAttribArray((unsigned int)i, a);
-                }
-            }
-            else ++_unhandled[name];
-        }
-        // ---- legacy (fileVersion < 112) command names ----
-        else if (name == "setVertexArray" || name == "setNormalArray" || name == "setColorArray" ||
-                 name == "setSecondaryColorArray" || name == "setFogCoordArray")
-        {
-            osg::Geometry* g = dynamic_cast<osg::Geometry*>(o);
-            osg::Array* a = dynamic_cast<osg::Array*>(resolve(arg(args, 0)));
-            if (g && a)
-            {
-                if (name == "setVertexArray") g->setVertexArray(a);
-                else if (name == "setNormalArray") g->setNormalArray(a);
-                else if (name == "setColorArray") g->setColorArray(a);
-                else if (name == "setSecondaryColorArray") g->setSecondaryColorArray(a);
-                else g->setFogCoordArray(a);
-            }
-            else ++_unhandled[name];
-        }
-        else if (name == "setTexCoordArray")
-        {
-            osg::Geometry* g = dynamic_cast<osg::Geometry*>(o);
-            osg::Array* a = dynamic_cast<osg::Array*>(resolve(arg(args, 1)));
-            if (g && a) g->setTexCoordArray(uArg(args, 0), a); else ++_unhandled[name];
-        }
-        else if (name == "setVertexAttribArray")
-        {
-            osg::Geometry* g = dynamic_cast<osg::Geometry*>(o);
-            osg::Array* a = dynamic_cast<osg::Array*>(resolve(arg(args, 1)));
-            if (g && a) g->setVertexAttribArray(uArg(args, 0), a); else ++_unhandled[name];
-        }
-        else if (name == "setWrap")
-        {
-            osg::Texture* t = dynamic_cast<osg::Texture*>(o);
-            if (t) t->setWrap((osg::Texture::WrapParameter)uArg(args, 0),
-                              (osg::Texture::WrapMode)uArg(args, 1));
-            else ++_unhandled[name];
-        }
-        else if (name == "setFilter")
-        {
-            osg::Texture* t = dynamic_cast<osg::Texture*>(o);
-            if (t) t->setFilter((osg::Texture::FilterParameter)uArg(args, 0),
-                                (osg::Texture::FilterMode)uArg(args, 1));
-            else ++_unhandled[name];
-        }
-        else if (name == "setInternalFormat")
-        {
-            osg::Texture* t = dynamic_cast<osg::Texture*>(o);
-            if (t) t->setInternalFormat(iArg(args, 0)); else ++_unhandled[name];
-        }
-        else if (name == "setSourceFormat")
-        {
-            osg::Texture* t = dynamic_cast<osg::Texture*>(o);
-            if (t) t->setSourceFormat((GLint)iArg(args, 0)); else ++_unhandled[name];
-        }
-        else if (name == "setSourceType")
-        {
-            osg::Texture* t = dynamic_cast<osg::Texture*>(o);
-            if (t) t->setSourceType((GLenum)uArg(args, 0)); else ++_unhandled[name];
-        }
-        else if (name == "setSwizzle") { /* not needed for rendering */ }
-        // ---- node / drawable state & bounds ----
-        else if (name == "StateSet" || name == "setStateSet")
-        {
-            osg::StateSet* ss = dynamic_cast<osg::StateSet*>(resolve(arg(args, 0)));
-            bool ok = false;
-            if (ss)
-            {
-                if (osg::Node* n = dynamic_cast<osg::Node*>(o)) { n->setStateSet(ss); ok = true; }
-                else if (osg::Drawable* d = dynamic_cast<osg::Drawable*>(o)) { d->setStateSet(ss); ok = true; }
-            }
-            if (!ok) ++_unhandled[name];
-        }
-        else if (name == "setInitialBound")
-        {
-            bool ok = false;
-            if (osg::Node* n = dynamic_cast<osg::Node*>(o))
-            {
-                if (!args.empty() && args[0].kind == osgVerse::IRArg::BSPHERE)
-                {
-                    n->setInitialBound(osg::BoundingSphere(
-                        osg::Vec3d(args[0].v[0], args[0].v[1], args[0].v[2]), args[0].v[3]));
-                    ok = true;
-                }
-            }
-            else if (osg::Drawable* d = dynamic_cast<osg::Drawable*>(o))
-            {
-                if (!args.empty() && args[0].kind == osgVerse::IRArg::BBOX)
-                {
-                    d->setInitialBound(osg::BoundingBox(
-                        osg::Vec3(args[0].v[0], args[0].v[1], args[0].v[2]),
-                        osg::Vec3(args[0].v[3], args[0].v[4], args[0].v[5])));
-                    ok = true;
-                }
-            }
-            if (!ok) ++_unhandled[name];
-        }
-        else
-            ++_unhandled[name];
-    }
 
     static osg::Array::Binding arrayBinding(const std::string& s)
     {
@@ -543,6 +506,26 @@ protected:
         if (s == "BIND_PER_PRIMITIVE_SET") return osg::Array::BIND_PER_PRIMITIVE_SET;
         if (s == "BIND_PER_VERTEX") return osg::Array::BIND_PER_VERTEX;
         return osg::Array::BIND_UNDEFINED;
+    }
+
+    static void buildPrimitive(osg::Object* o, const osgVerse::IRObject& obj)
+    {
+        if (osg::DrawArrays* da = dynamic_cast<osg::DrawArrays*>(o))
+        {
+            da->setMode((osg::PrimitiveSet::Mode)obj.primMode);
+            da->setFirst(obj.primFirst); da->setCount(obj.primCount);
+            return;
+        }
+        osg::DrawElements* de = dynamic_cast<osg::DrawElements*>(o);
+        if (!de) return;
+        de->setMode((osg::PrimitiveSet::Mode)obj.primMode);
+        de->resizeElements((unsigned int)obj.primIndices.size());
+        if (osg::DrawElementsUShort* d = dynamic_cast<osg::DrawElementsUShort*>(de))
+        { for (size_t i = 0; i < obj.primIndices.size(); ++i) (*d)[i] = (unsigned short)obj.primIndices[i]; }
+        else if (osg::DrawElementsUInt* d = dynamic_cast<osg::DrawElementsUInt*>(de))
+        { for (size_t i = 0; i < obj.primIndices.size(); ++i) (*d)[i] = obj.primIndices[i]; }
+        else if (osg::DrawElementsUByte* d = dynamic_cast<osg::DrawElementsUByte*>(de))
+        { for (size_t i = 0; i < obj.primIndices.size(); ++i) (*d)[i] = (unsigned char)obj.primIndices[i]; }
     }
 
     static void fillVectorData(osg::Object* o, const std::string& token,
@@ -558,6 +541,8 @@ protected:
         { a->resize(count); for (size_t i = 0; i < count; ++i) (*a)[i].set((float)v[i*n], (float)v[i*n+1], (float)v[i*n+2], (float)v[i*n+3]); }
         else if (osg::FloatArray* a = dynamic_cast<osg::FloatArray*>(o))
         { a->resize(count); for (size_t i = 0; i < count; ++i) (*a)[i] = (float)v[i]; }
+        else if (osg::DoubleArray* a = dynamic_cast<osg::DoubleArray*>(o))
+        { a->resize(count); for (size_t i = 0; i < count; ++i) (*a)[i] = v[i]; }
         else if (osg::DrawElements* de = dynamic_cast<osg::DrawElements*>(o))
         {
             de->resizeElements((unsigned int)v.size());
@@ -568,8 +553,7 @@ protected:
             else if (osg::DrawElementsUByte* d = dynamic_cast<osg::DrawElementsUByte*>(de))
             { for (size_t i = 0; i < v.size(); ++i) (*d)[i] = (unsigned char)v[i]; }
         }
-        else if (osg::DoubleArray* a = dynamic_cast<osg::DoubleArray*>(o))
-        { a->resize(count); for (size_t i = 0; i < count; ++i) (*a)[i] = v[i]; }
+        (void)token;
     }
 
     static void buildImage(osg::Image* img, const osgVerse::IRObject& obj)
@@ -601,6 +585,7 @@ protected:
         }
     }
 
+    std::map<std::string, Handler> _handlers;
     std::vector<osg::ref_ptr<osg::Object> > _objs;
     std::map<std::string, osg::Object*> _byKey;
     osg::ref_ptr<osg::Object> _rootRef;
