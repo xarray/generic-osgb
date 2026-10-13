@@ -382,4 +382,9 @@ namespace osgVerse
     extern "C" void rewrapper_serializer_##NAME(void); \
     static osgVerse::RegisterWrapperFunctionProxy rewrapperfunc_proxy_##NAME(rewrapper_serializer_##NAME);
 
+// Static-archive builds keep the registrars alive through
+// USE_SERIALIZER_WRAPPER_LIBRARY() in GenericStaticWrappers.h. That header is
+// self-contained on purpose (it must not pull in the mini-osg math layer), so
+// the macro lives there rather than next to USE_OBJECT_WRAPPER.
+
 #endif

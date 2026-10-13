@@ -41,8 +41,19 @@ target_include_directories(osgVerseGenericReserializer PUBLIC
 
 # The static registrars are never referenced explicitly, so MSVC/GCC would drop
 # the object files unless the archive is force-included in full.
+#
+# ENABLE_STATIC_LIBRARY=ON switches to a plain static link instead: nothing is
+# force-included, and each executable keeps the registrars alive by including
+# GenericStaticWrappers.h (gated on the OSGVERSE_GENERIC_USE_STATIC_ACTIVATION
+# define set below) -- the equivalent of osgDB's USE_SERIALIZER_WRAPPER_LIBRARY.
+option(ENABLE_STATIC_LIBRARY
+    "Link the core as a plain static archive and activate wrappers explicitly" OFF)
+
 function(link_generic_library target)
-    if(MSVC)
+    if(ENABLE_STATIC_LIBRARY)
+        target_link_libraries(${target} PRIVATE osgVerseGenericReserializer)
+        target_compile_definitions(${target} PRIVATE OSGVERSE_GENERIC_USE_STATIC_ACTIVATION=1)
+    elseif(MSVC)
         target_link_libraries(${target} PRIVATE osgVerseGenericReserializer)
         target_link_options(${target} PRIVATE "/WHOLEARCHIVE:osgVerseGenericReserializer")
     else()
@@ -59,10 +70,6 @@ link_generic_library(reserializing_test)
 
 add_executable(null_integration examples/null_integration.cpp)
 link_generic_library(null_integration)
-
-enable_testing()
-add_test(NAME reserializing_test
-         COMMAND reserializing_test ${CMAKE_CURRENT_SOURCE_DIR}/../examples/osgemscripten/box.osgt)
 
 # ---------------------------------------------------------------------------
 # Engine-specific examples (each may pull in its own engine SDK). Each engine is

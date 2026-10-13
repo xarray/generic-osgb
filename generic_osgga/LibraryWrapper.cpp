@@ -1,0 +1,19 @@
+#include <GenericReserializer.h>
+using namespace osgVerse;
+
+USE_SERIALIZER_WRAPPER(EventVisitor)
+USE_SERIALIZER_WRAPPER(osgGA_AnimationPathManipulator)
+USE_SERIALIZER_WRAPPER(osgGA_DriveManipulator)
+USE_SERIALIZER_WRAPPER(osgGA_FlightManipulator)
+USE_SERIALIZER_WRAPPER(osgGA_GUIEventAdapter)
+USE_SERIALIZER_WRAPPER(osgGA_GUIEventHandler)
+USE_SERIALIZER_WRAPPER(osgGA_KeySwitchMatrixManipulator)
+USE_SERIALIZER_WRAPPER(osgGA_MultiTouchTrackballManipulator)
+USE_SERIALIZER_WRAPPER(osgGA_StateSetManipulator)
+USE_SERIALIZER_WRAPPER(osgGA_TerrainManipulator)
+USE_SERIALIZER_WRAPPER(osgGA_TouchData)
+USE_SERIALIZER_WRAPPER(osgGA_TrackballManipulator)
+USE_SERIALIZER_WRAPPER(osgGA_UFOManipulator)
+USE_SERIALIZER_WRAPPER(osgGA_Widget)
+
+extern "C" void wrapper_serializer_library_osgGA(void) {}

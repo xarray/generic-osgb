@@ -8,6 +8,10 @@
 
 #include "GenericReader.h"
 
+#ifdef OSGVERSE_GENERIC_USE_STATIC_ACTIVATION
+#include "GenericStaticWrappers.h"   // keep every wrapper registrar in a plain static link
+#endif
+
 namespace
 {
     // Print the object scene tree recorded during reading.

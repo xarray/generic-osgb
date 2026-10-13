@@ -49,6 +49,10 @@
 
 #include "SceneIR.h"
 
+#ifdef OSGVERSE_GENERIC_USE_STATIC_ACTIVATION
+#include "GenericStaticWrappers.h"   // keep every wrapper registrar in a plain static link
+#endif
+
 namespace
 {
     std::string nsFor(const std::string& className)

@@ -37,6 +37,10 @@
 #include "SceneIR.h"
 #include "vsg_scene_builder.h"
 
+#ifdef OSGVERSE_GENERIC_USE_STATIC_ACTIVATION
+#include "GenericStaticWrappers.h"   // keep every wrapper registrar in a plain static link
+#endif
+
 namespace
 {
     vsg::Path directoryOf(const vsg::Path& path)

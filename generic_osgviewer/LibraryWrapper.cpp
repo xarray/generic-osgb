@@ -1,0 +1,13 @@
+#include <GenericReserializer.h>
+using namespace osgVerse;
+
+USE_SERIALIZER_WRAPPER(osgViewer_AcrossAllScreens)
+USE_SERIALIZER_WRAPPER(osgViewer_Keystone)
+USE_SERIALIZER_WRAPPER(osgViewer_PanoramicSphericalDisplay)
+USE_SERIALIZER_WRAPPER(osgViewer_SingleScreen)
+USE_SERIALIZER_WRAPPER(osgViewer_SingleWindow)
+USE_SERIALIZER_WRAPPER(osgViewer_SphericalDisplay)
+USE_SERIALIZER_WRAPPER(osgViewer_ViewConfig)
+USE_SERIALIZER_WRAPPER(osgViewer_WoWVxDisplay)
+
+extern "C" void wrapper_serializer_library_osgViewer(void) {}

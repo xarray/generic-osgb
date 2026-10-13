@@ -32,8 +32,11 @@ This project re-implements that mechanism standalone:
 * **Registration** — the `REGISTER_OBJECT_WRAPPER` macro expands into a static
   `RegisterWrapperProxy` that registers the wrapper into `RewrapperManager`
   **before `main()` runs**. Because those registrars are never referenced
-  explicitly, the static library must be linked with *whole-archive*
-  (`--whole-archive` / `/WHOLEARCHIVE`) or the linker would drop them.
+  explicitly, the archive is linked with *whole-archive*
+  (`--whole-archive` / `/WHOLEARCHIVE`) by default; with
+  `-DENABLE_STATIC_LIBRARY=ON` the executable instead keeps them alive by
+  explicitly activating each library through `GenericStaticWrappers.h`
+  (see §3).
 * **Dispatch** — `SerializerVisitor` walks a wrapper and routes every serializer
   to its read path (`readSerializerValue`), keeping the reader generic.
 * **Math / base layer** — `GenericMath.h` defines a minimal `osg` namespace
@@ -126,6 +129,54 @@ Done.
 ```
 
 `--force-ascii` skips binary detection and parses the input as ASCII text.
+
+### Static library (`ENABLE_STATIC_LIBRARY`)
+
+By default the core archive is linked with *whole-archive* so the static
+registrars survive. `-DENABLE_STATIC_LIBRARY=ON` replaces that with an explicit,
+plain static link: nothing is force-included, and each executable keeps the
+registrars alive by including `GenericStaticWrappers.h` — guarded by the
+`OSGVERSE_GENERIC_USE_STATIC_ACTIVATION` define the option adds to it:
+
+```bash
+cmake -S . -B build-static -DENABLE_STATIC_LIBRARY=ON
+cmake --build build-static
+```
+
+`GenericStaticWrappers.h` mirrors osgDB's `USE_SERIALIZER_WRAPPER_LIBRARY`: it
+references one `wrapper_serializer_library_<lib>()` anchor per ported library
+(defined in each `generic_osg*/LibraryWrapper.cpp`), which is what makes the
+linker keep those members and, transitively, every per-class registrar. Both
+modes register the same **461** wrappers — `reserializing_test` prints the count
+(`Rewrappers: 461`) and both produce byte-identical `null_integration` output.
+
+### WebAssembly (Emscripten)
+
+The core and the dependency-free executables (`reserializing_test`,
+`null_integration`) build to WASM unchanged, since they use only the standard
+library. With Emscripten installed (this tree uses `~/Public/emsdk`):
+
+```bash
+source ~/Public/emsdk/emsdk_env.sh
+emcmake cmake -S . -B build-wasm -DENABLE_STATIC_LIBRARY=ON \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="-sNODERAWFS=1 -sEXIT_RUNTIME=1"
+cmake --build build-wasm
+```
+
+This emits `build-wasm/reserializing_test.js` + `.wasm` and
+`null_integration.js` + `.wasm`. Run them under node — `-sNODERAWFS=1` lets the
+module read files from the host filesystem and `-sEXIT_RUNTIME=1` makes the
+process exit after `main()`:
+
+```bash
+node build-wasm/reserializing_test.js ~/Public/Assets/osg-data/cessna.osgt
+node build-wasm/null_integration.js  ~/Public/Assets/osg-data/clock.osgt
+```
+
+`ENABLE_STATIC_LIBRARY=ON` is recommended for WASM (the explicit activation
+avoids depending on whole-archive); the default whole-archive path also links
+under Emscripten. `-sNODERAWFS=1` is only needed to read host files under node —
+in a browser, mount the asset (or embed it with `--preload-file`) instead.
 
 ### Engine examples
 
