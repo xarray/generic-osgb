@@ -99,17 +99,22 @@ cmake -S . -B build
 cmake --build build
 ```
 
-This produces the static library `osgVerseGenericReserializer` and the
-`reserializing_test` executable.
+This produces the dependency-free static library `osgVerseGenericReserializer`
+and two executables that depend only on it:
 
-Run it on any `.osgt` / `.osgb` file:
+* `reserializing_test` — parses a file and prints the object scene tree.
+* `null_integration` — rebuilds the neutral `SceneIR` and prints everything the
+  IR describes (object/command histograms, data payloads, full scene tree).
+
+Run them on any `.osgt` / `.osgb` file:
 
 ```bash
 ./build/reserializing_test <file.osgt|file.osgb> [--force-ascii]
+./build/null_integration  <file.osgt|file.osgb>
 ```
 
-Output reports the number of registered rewrappers, the top-level object class,
-and the parsed scene tree:
+Output of `reserializing_test` reports the number of registered rewrappers, the
+top-level object class, and the parsed scene tree:
 
 ```
 Rewrappers: 232
@@ -121,6 +126,29 @@ Done.
 ```
 
 `--force-ascii` skips binary detection and parses the input as ASCII text.
+
+### Engine examples
+
+Concrete engine adapters live under `examples/`; each example may pull in its own
+engine SDK and is off by default. The OpenSceneGraph "echo back" example rebuilds
+a real osg scene (through `osgDB::ObjectWrapperManager`) and renders it with
+`osgViewer`:
+
+```bash
+cmake -S . -B build -DENABLE_OSG_INTEGRATION=ON \
+      -DOSG_INTEGRATION_ROOT=/path/to/osg-sdk     # contains include/ and lib/
+cmake --build build
+./build/osg_integration <file.osgt|file.osgb>          # render
+./build/osg_integration <file.osgt|file.osgb> --list   # rebuild + report only
+```
+
+### Directory layout
+
+```
+.                       dependency-free core (reader, IR, math layer)
+generic_osg/            one wrapper per osg class (statically registered)
+examples/               example programs (null_integration, osg_integration, ...)
+```
 
 ---
 

@@ -2,6 +2,7 @@
 #define GENERIC_INPUTSTREAM_H
 
 #include "GenericMath.h"
+#include "SceneIR.h"
 #include <map>
 #include <vector>
 #include <string>
@@ -87,6 +88,7 @@ const unsigned int OSG_HEADER_HIGH = 0x1AFB4545;
 // ---------------------------------------------------------------------------
 class InputStream;
 class InputUserData;
+class SerializerVisitor;
 
 class InputException : public osg::Referenced
 {
@@ -488,7 +490,8 @@ public:
 
 protected:
     void readArrayImplementation(unsigned int arrayType, unsigned int numComponents,
-                                 unsigned int componentSizeInBytes);
+                                 unsigned int componentSizeInBytes,
+                                 std::vector<double>* out = NULL);
 
     DomainVersionMap _domainVersionMap;
     IdentifierMap    _identifierMap;
@@ -497,10 +500,76 @@ protected:
     ObjectMap        _objectMap;
     InputIterator*   _in;
     int              _exception;
+    std::vector<double>* _arrayCapture;   // optional capture target for readArray (legacy path)
 };
 
 // ---------------------------------------------------------------------------
-// InputUserData: the generic version's object-property collector (no osg object container; records printable info)
+// IR argument conversion: packages the arguments of a recorded command
+// (ud.add(...)) into the neutral IR value type. Raw pointers whose payload
+// length is carried by a separate argument are not captured.
+// ---------------------------------------------------------------------------
+inline IRArg toIRArg(bool v) { return IRArg::makeBool(v); }
+inline IRArg toIRArg(char v) { return IRArg::makeInt((long long)v); }
+inline IRArg toIRArg(signed char v) { return IRArg::makeInt((long long)v); }
+inline IRArg toIRArg(unsigned char v) { return IRArg::makeUInt((unsigned long long)v); }
+inline IRArg toIRArg(short v) { return IRArg::makeInt((long long)v); }
+inline IRArg toIRArg(unsigned short v) { return IRArg::makeUInt((unsigned long long)v); }
+inline IRArg toIRArg(int v) { return IRArg::makeInt((long long)v); }
+inline IRArg toIRArg(unsigned int v) { return IRArg::makeUInt((unsigned long long)v); }
+inline IRArg toIRArg(long v) { return IRArg::makeInt((long long)v); }
+inline IRArg toIRArg(unsigned long v) { return IRArg::makeUInt((unsigned long long)v); }
+inline IRArg toIRArg(long long v) { return IRArg::makeInt(v); }
+inline IRArg toIRArg(unsigned long long v) { return IRArg::makeUInt(v); }
+inline IRArg toIRArg(float v) { return IRArg::makeDouble((double)v); }
+inline IRArg toIRArg(double v) { return IRArg::makeDouble(v); }
+inline IRArg toIRArg(const char* v) { return IRArg::makeString(v ? std::string(v) : std::string()); }
+inline IRArg toIRArg(const std::string& v) { return IRArg::makeString(v); }
+inline IRArg toIRArg(const ObjectTypeAndID& o) { return IRArg::makeObject(o._type, o._id); }
+inline IRArg toIRArg(const ObjectTypeAndID* o)
+{ return o ? IRArg::makeObject(o->_type, o->_id) : IRArg(); }
+inline IRArg toIRArg(unsigned char*) { return IRArg(); }
+inline IRArg toIRArg(const unsigned char*) { return IRArg(); }
+
+template<unsigned int N, typename T>
+inline IRArg toIRArg(const osg::Vec<N, T>& v)
+{
+    IRArg a; a.kind = (N == 2) ? IRArg::VEC2 : (N == 3 ? IRArg::VEC3 : IRArg::VEC4);
+    a.n = (int)N;
+    for (unsigned int i = 0; i < N && i < 16u; ++i) a.v[i] = (double)v._v[i];
+    return a;
+}
+inline IRArg toIRArg(const osg::Quat& q)
+{ IRArg a; a.kind = IRArg::QUAT; a.n = 4; for (int i = 0; i < 4; ++i) a.v[i] = q._v[i]; return a; }
+inline IRArg toIRArg(const osg::Plane& p)
+{ IRArg a; a.kind = IRArg::PLANE; a.n = 4; for (int i = 0; i < 4; ++i) a.v[i] = p._v[i]; return a; }
+inline IRArg toIRArg(const osg::Matrixd& m)
+{ IRArg a; a.kind = IRArg::MATRIX; a.n = 16; for (int i = 0; i < 16; ++i) a.v[i] = m._m[i]; return a; }
+inline IRArg toIRArg(const osg::Matrixf& m)
+{ IRArg a; a.kind = IRArg::MATRIX; a.n = 16; for (int i = 0; i < 16; ++i) a.v[i] = (double)m._m[i]; return a; }
+inline IRArg toIRArg(const osg::BoundingBoxf& b)
+{ IRArg a; a.kind = IRArg::BBOX; a.n = 6;
+  for (int i = 0; i < 3; ++i) { a.v[i] = (double)b._min._v[i]; a.v[3 + i] = (double)b._max._v[i]; } return a; }
+inline IRArg toIRArg(const osg::BoundingBoxd& b)
+{ IRArg a; a.kind = IRArg::BBOX; a.n = 6;
+  for (int i = 0; i < 3; ++i) { a.v[i] = b._min._v[i]; a.v[3 + i] = b._max._v[i]; } return a; }
+inline IRArg toIRArg(const osg::BoundingSpheref& s)
+{ IRArg a; a.kind = IRArg::BSPHERE; a.n = 4;
+  for (int i = 0; i < 3; ++i) a.v[i] = (double)s._center._v[i]; a.v[3] = (double)s._radius; return a; }
+inline IRArg toIRArg(const osg::BoundingSphered& s)
+{ IRArg a; a.kind = IRArg::BSPHERE; a.n = 4;
+  for (int i = 0; i < 3; ++i) a.v[i] = s._center._v[i]; a.v[3] = s._radius; return a; }
+
+// ---------------------------------------------------------------------------
+// InputUserData: the target-agnostic sink used while reading.
+//
+//  * `add(...)` receives the explicit commands emitted by user-serializer read
+//    functions (addChild / setMode / ...). They are forwarded to the optional
+//    SerializerVisitor and/or recorded into the optional SceneIR.
+//  * addTreeNode()/pushTreeNode()/popTreeNode() delimit object scopes and drive
+//    the visitor's beginObject()/endObject() callbacks and the IR object list.
+//  * Serializer values (basic types, objects, arrays, ...) are delivered to the
+//    visitor by InputStream::readSerializerList() through the SerializerVisitor
+//    apply() overloads.
 // ---------------------------------------------------------------------------
 class InputUserData
 {
@@ -523,10 +592,24 @@ public:
     InputUserData();
     virtual ~InputUserData();
 
-    template<typename... Args> void add(const char* name, Args&&...) {}
-    template<typename... Args> void add(const char* name, unsigned int index, Args&&...) {}
-    template<typename... Args> void add(const ObjectTypeAndID& parent, const char* name, Args&&...) {}
-    template<typename... Args> void add(const ObjectTypeAndID& parent, const char* name, unsigned int index, Args&&...) {}
+    // Engine extension point: an optional visitor that rebuilds the scene while
+    // the file is read. Not owned by InputUserData.
+    void setVisitor(SerializerVisitor* v) { _visitor = v; }
+    SerializerVisitor* getVisitor() const { return _visitor; }
+
+    // Optional neutral-IR recording (SceneIR is not owned by InputUserData).
+    void setIR(SceneIR* ir) { _ir = ir; }
+    SceneIR* getIR() const { return _ir; }
+    int currentIR() const { return _irStack.empty() ? -1 : _irStack.back(); }
+
+    template<typename... Args> void add(const char* name, Args&&... args)
+    { emitCommand(name, std::vector<IRArg>{ toIRArg(args)... }); }
+    template<typename... Args> void add(const char* name, unsigned int index, Args&&... args)
+    { emitCommand(name, std::vector<IRArg>{ toIRArg(index), toIRArg(args)... }); }
+    template<typename... Args> void add(const ObjectTypeAndID& parent, const char* name, Args&&... args)
+    { emitCommand(parent, name, std::vector<IRArg>{ toIRArg(args)... }); }
+    template<typename... Args> void add(const ObjectTypeAndID& parent, const char* name, unsigned int index, Args&&... args)
+    { emitCommand(parent, name, std::vector<IRArg>{ toIRArg(index), toIRArg(args)... }); }
 
     // The generic version's get exists only for compile-time compatibility
     // (no real property storage); it always returns false.
@@ -537,6 +620,19 @@ public:
 
     ObjectTypeAndID readObjectFromStream(InputStream& is, const std::string& type);
 
+    // Object-scope and data-bearing notifications, called by InputStream while
+    // reading (forwarded to the visitor). Public because InputStream owns them.
+    void notifyBeginObject(const std::string& className, const std::string& id);
+    void notifyEndObject();
+    void notifyArrayData(int components, const std::vector<double>& values);
+    void notifyPrimitiveData(int mode, unsigned int first, unsigned int count,
+                             const std::vector<unsigned int>& indices);
+    void notifyImageData(const std::string& fileName, int origin,
+                         int width, int height, int depth,
+                         int internalFormat, int pixelFormat, int dataType,
+                         int packing, int allocationMode,
+                         const std::vector<unsigned char>& pixels);
+
     // Scene-tree recording (called from InputStream::readObject)
     int addTreeNode(const std::string& className, const std::string& id, std::streampos pos)
     {
@@ -545,10 +641,29 @@ public:
         _treeNodes.push_back(node);
         int idx = (int)(_treeNodes.size() - 1);
         if (node.parentId >= 0) _treeNodes[node.parentId].children.push_back(idx);
+        if (_ir)
+        {
+            int parentIr = _irStack.empty() ? -1 : _irStack.back();
+            _treeToIr[idx] = _ir->createObject(className, id, parentIr, (long long)pos);
+        }
+        notifyBeginObject(className, id);
         return idx;
     }
-    void pushTreeNode(int idx) { _treeStack.push_back(idx); }
-    void popTreeNode() { if (!_treeStack.empty()) _treeStack.pop_back(); }
+    void pushTreeNode(int idx)
+    {
+        _treeStack.push_back(idx);
+        if (_ir)
+        {
+            std::map<int, int>::iterator itr = _treeToIr.find(idx);
+            _irStack.push_back(itr != _treeToIr.end() ? itr->second : -1);
+        }
+    }
+    void popTreeNode()
+    {
+        if (!_treeStack.empty()) _treeStack.pop_back();
+        if (_ir && !_irStack.empty()) _irStack.pop_back();
+        notifyEndObject();
+    }
 
     void clear();
 
@@ -557,9 +672,17 @@ public:
     const std::vector<TreeNode>& getTreeNodes() const { return _treeNodes; }
 
 protected:
+    // Defined in GenericInputStream.cpp (need the complete SerializerVisitor).
+    void emitCommand(const char* name, const std::vector<IRArg>& args);
+    void emitCommand(const ObjectTypeAndID& parent, const char* name, const std::vector<IRArg>& args);
+
     ObjectMap _objectMap;
     std::vector<TreeNode> _treeNodes;
     std::vector<int> _treeStack;
+    SerializerVisitor* _visitor;
+    SceneIR* _ir;
+    std::vector<int> _irStack;
+    std::map<int, int> _treeToIr;
 };
 
 } // namespace osgVerse

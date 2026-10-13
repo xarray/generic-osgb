@@ -26,6 +26,68 @@ namespace
         { std::swap(ptr[i], ptr[size - 1 - i]); }
     }
 
+    // Map the compact ArrayType id to the osg class name / component count so a
+    // visitor or the IR can rebuild the array (legacy files carry no class name).
+    inline const char* g_osgArrayClass(unsigned int t)
+    {
+        switch (t)
+        {
+        case ID_BYTE_ARRAY:   return "osg::ByteArray";
+        case ID_UBYTE_ARRAY:  return "osg::UByteArray";
+        case ID_SHORT_ARRAY:  return "osg::ShortArray";
+        case ID_USHORT_ARRAY: return "osg::UShortArray";
+        case ID_INT_ARRAY:    return "osg::IntArray";
+        case ID_UINT_ARRAY:   return "osg::UIntArray";
+        case ID_FLOAT_ARRAY:  return "osg::FloatArray";
+        case ID_DOUBLE_ARRAY: return "osg::DoubleArray";
+        case ID_VEC2B_ARRAY:  return "osg::Vec2bArray";
+        case ID_VEC3B_ARRAY:  return "osg::Vec3bArray";
+        case ID_VEC4B_ARRAY:  return "osg::Vec4bArray";
+        case ID_VEC4UB_ARRAY: return "osg::Vec4ubArray";
+        case ID_VEC2S_ARRAY:  return "osg::Vec2sArray";
+        case ID_VEC3S_ARRAY:  return "osg::Vec3sArray";
+        case ID_VEC4S_ARRAY:  return "osg::Vec4sArray";
+        case ID_VEC2_ARRAY:   return "osg::Vec2Array";
+        case ID_VEC3_ARRAY:   return "osg::Vec3Array";
+        case ID_VEC4_ARRAY:   return "osg::Vec4Array";
+        case ID_VEC2D_ARRAY:  return "osg::Vec2dArray";
+        case ID_VEC3D_ARRAY:  return "osg::Vec3dArray";
+        case ID_VEC4D_ARRAY:  return "osg::Vec4dArray";
+        case ID_VEC2UB_ARRAY: return "osg::Vec2ubArray";
+        case ID_VEC3UB_ARRAY: return "osg::Vec3ubArray";
+        case ID_VEC2US_ARRAY: return "osg::Vec2usArray";
+        case ID_VEC3US_ARRAY: return "osg::Vec3usArray";
+        case ID_VEC4US_ARRAY: return "osg::Vec4usArray";
+        case ID_VEC2I_ARRAY:  return "osg::Vec2iArray";
+        case ID_VEC3I_ARRAY:  return "osg::Vec3iArray";
+        case ID_VEC4I_ARRAY:  return "osg::Vec4iArray";
+        case ID_VEC2UI_ARRAY: return "osg::Vec2uiArray";
+        case ID_VEC3UI_ARRAY: return "osg::Vec3uiArray";
+        case ID_VEC4UI_ARRAY: return "osg::Vec4uiArray";
+        case ID_UINT64_ARRAY: return "osg::UInt64Array";
+        case ID_INT64_ARRAY:  return "osg::Int64Array";
+        default: break;
+        }
+        return "osg::Array";
+    }
+
+    inline int g_arrayComponents(unsigned int t)
+    {
+        switch (t)
+        {
+        case ID_VEC2B_ARRAY: case ID_VEC2S_ARRAY: case ID_VEC2_ARRAY: case ID_VEC2D_ARRAY:
+        case ID_VEC2UB_ARRAY: case ID_VEC2US_ARRAY: case ID_VEC2I_ARRAY: case ID_VEC2UI_ARRAY:
+            return 2;
+        case ID_VEC3B_ARRAY: case ID_VEC3S_ARRAY: case ID_VEC3_ARRAY: case ID_VEC3D_ARRAY:
+        case ID_VEC3UB_ARRAY: case ID_VEC3US_ARRAY: case ID_VEC3I_ARRAY: case ID_VEC3UI_ARRAY:
+            return 3;
+        case ID_VEC4B_ARRAY: case ID_VEC4UB_ARRAY: case ID_VEC4S_ARRAY: case ID_VEC4_ARRAY:
+        case ID_VEC4D_ARRAY: case ID_VEC4US_ARRAY: case ID_VEC4I_ARRAY: case ID_VEC4UI_ARRAY:
+            return 4;
+        default: return 1;
+        }
+    }
+
     // ------------------------------------------------------------------
     // Default lookup tables (ArrayType / PrimitiveType / ObjectType / GL)
     // ------------------------------------------------------------------
@@ -761,7 +823,7 @@ void BinaryInputIterator::advanceToCurrentEndBracket()
 // ---------------------------------------------------------------------------
 // InputStream
 // ---------------------------------------------------------------------------
-InputStream::InputStream() : _in(NULL), _exception(0)
+InputStream::InputStream() : _in(NULL), _exception(0), _arrayCapture(NULL)
 {
     BEGIN_BRACKET.setName("{");
     BEGIN_BRACKET.setMark(+INDENT_VALUE);
@@ -1010,6 +1072,18 @@ namespace
                 std::cerr << "[InputStream] Unhandled serializer '" << sl[i].first
                           << "' (" << typeid(*s).name() << ")\n";
             }
+            else
+            {
+                // Deliver the just-read value (property name + serializer) to the
+                // engine visitor. accept() pushes the property name so the
+                // visitor's apply() can dispatch on it.
+                SerializerVisitor* visitor = ud.getVisitor();
+                if (visitor)
+                {
+                    visitor->setInput(&is, &ud);
+                    s->accept(sl[i].first, *visitor);
+                }
+            }
             if (is.getException()) return false;
         }
         return true;
@@ -1059,50 +1133,82 @@ ObjectTypeAndID InputStream::readObjectFields(const std::string& className, cons
 }
 
 void InputStream::readArrayImplementation(unsigned int arrayType, unsigned int numComponents,
-                                          unsigned int componentSizeInBytes)
+                                          unsigned int componentSizeInBytes,
+                                          std::vector<double>* out)
 {
+    if (!out) out = _arrayCapture;
     unsigned int size = 0;
     *this >> size >> BEGIN_BRACKET;
     if (getException()) return;
 
     if (size > 0)
     {
+        bool isDoubleType =
+            (arrayType == ID_DOUBLE_ARRAY || arrayType == ID_VEC2D_ARRAY ||
+             arrayType == ID_VEC3D_ARRAY || arrayType == ID_VEC4D_ARRAY);
+        bool isFloatType =
+            (arrayType == ID_FLOAT_ARRAY || arrayType == ID_VEC2_ARRAY ||
+             arrayType == ID_VEC3_ARRAY || arrayType == ID_VEC4_ARRAY);
+        bool isInt64Type = (arrayType == ID_INT64_ARRAY || arrayType == ID_UINT64_ARRAY);
+
         if (isBinary())
         {
-            unsigned int bytesPerElement = numComponents * componentSizeInBytes;
-            unsigned int elementsPerChunk = 4096;
-            if (bytesPerElement > 0) elementsPerChunk = 4096 / bytesPerElement;
-            if (elementsPerChunk == 0) elementsPerChunk = 1;
-
-            std::vector<char> buffer;
-            unsigned int remaining = size;
-            while (remaining > 0)
+            if (out)
             {
-                unsigned int n = (remaining < elementsPerChunk) ? remaining : elementsPerChunk;
-                buffer.resize(n * bytesPerElement);
-                if (!buffer.empty())
-                    readComponentArray(&buffer[0], n, numComponents, componentSizeInBytes);
-                remaining -= n;
+                // Capture path (an engine visitor / IR recording is active):
+                // read element by element and materialize component doubles.
+                unsigned int bytesPerElement = numComponents * componentSizeInBytes;
+                std::vector<char> row(bytesPerElement ? bytesPerElement : 1);
+                for (unsigned int i = 0; i < size; ++i)
+                {
+                    if (bytesPerElement)
+                        readComponentArray(&row[0], 1, numComponents, componentSizeInBytes);
+                    for (unsigned int j = 0; j < numComponents; ++j)
+                    {
+                        const char* p = &row[j * componentSizeInBytes];
+                        double value = 0.0;
+                        if (isInt64Type) { long long t = 0; std::memcpy(&t, p, 8); value = (double)t; }
+                        else if (isDoubleType) { double t = 0; std::memcpy(&t, p, 8); value = t; }
+                        else if (isFloatType) { float t = 0; std::memcpy(&t, p, 4); value = (double)t; }
+                        else
+                        {
+                            unsigned long long raw = 0;
+                            std::memcpy(&raw, p, componentSizeInBytes);
+                            value = (double)(long long)raw;
+                        }
+                        out->push_back(value);
+                    }
+                }
+            }
+            else
+            {
+                unsigned int bytesPerElement = numComponents * componentSizeInBytes;
+                unsigned int elementsPerChunk = 4096;
+                if (bytesPerElement > 0) elementsPerChunk = 4096 / bytesPerElement;
+                if (elementsPerChunk == 0) elementsPerChunk = 1;
+
+                std::vector<char> buffer;
+                unsigned int remaining = size;
+                while (remaining > 0)
+                {
+                    unsigned int n = (remaining < elementsPerChunk) ? remaining : elementsPerChunk;
+                    buffer.resize(n * bytesPerElement);
+                    if (!buffer.empty())
+                        readComponentArray(&buffer[0], n, numComponents, componentSizeInBytes);
+                    remaining -= n;
+                }
             }
         }
         else
         {
-            bool isDoubleType =
-                (arrayType == ID_DOUBLE_ARRAY || arrayType == ID_VEC2D_ARRAY ||
-                 arrayType == ID_VEC3D_ARRAY || arrayType == ID_VEC4D_ARRAY);
-            bool isFloatType =
-                (arrayType == ID_FLOAT_ARRAY || arrayType == ID_VEC2_ARRAY ||
-                 arrayType == ID_VEC3_ARRAY || arrayType == ID_VEC4_ARRAY);
-            bool isInt64Type = (arrayType == ID_INT64_ARRAY || arrayType == ID_UINT64_ARRAY);
-
             for (unsigned int i = 0; i < size; ++i)
             {
                 for (unsigned int j = 0; j < numComponents; ++j)
                 {
-                    if (isInt64Type) { long long v; *this >> v; }
-                    else if (isDoubleType) { double v; *this >> v; }
-                    else if (isFloatType) { float v; *this >> v; }
-                    else { int v; *this >> v; }
+                    if (isInt64Type) { long long v; *this >> v; if (out) out->push_back((double)v); }
+                    else if (isDoubleType) { double v; *this >> v; if (out) out->push_back(v); }
+                    else if (isFloatType) { float v; *this >> v; if (out) out->push_back((double)v); }
+                    else { int v; *this >> v; if (out) out->push_back((double)v); }
                 }
             }
         }
@@ -1131,6 +1237,16 @@ ObjectTypeAndID InputStream::readArray(InputUserData& ud)
     std::string typeName = arrayTable.value(type.get());
     if (typeName.empty()) typeName = type._name;
     if (typeName.empty() || typeName == "ArrayType") typeName = "Array";
+
+    // Legacy compact arrays carry no class name: expose the mapped osg class and
+    // the element data to the visitor / IR.
+    bool record = (ud.getVisitor() != NULL);
+    std::vector<double> values;
+    if (record)
+    {
+        _arrayCapture = &values;
+        ud.notifyBeginObject(g_osgArrayClass(type.get()), std::to_string(id));
+    }
 
     switch (type.get())
     {
@@ -1172,7 +1288,18 @@ ObjectTypeAndID InputStream::readArray(InputUserData& ud)
         _in->advanceToCurrentEndBracket();
         break;
     }
-    if (getException()) return ObjectTypeAndID();
+    _arrayCapture = NULL;
+    if (getException())
+    {
+        if (record) ud.notifyEndObject();
+        return ObjectTypeAndID();
+    }
+
+    if (record)
+    {
+        ud.notifyArrayData(g_arrayComponents(type.get()), values);
+        ud.notifyEndObject();
+    }
 
     ObjectTypeAndID oid(typeName, std::to_string(id));
     _arrayMap[id] = oid;
@@ -1181,6 +1308,10 @@ ObjectTypeAndID InputStream::readArray(InputUserData& ud)
 
 ObjectTypeAndID InputStream::readPrimitiveSet(InputUserData& ud)
 {
+    // Legacy compact primitive sets have no UniqueID in the stream; use the file
+    // offset as a synthetic, per-file-unique id so references can resolve.
+    long long primId = (long long)tellg();
+
     DEF_MAPPEE(PrimitiveType, type);
     DEF_MAPPEE(PrimitiveType, mode);
     *this >> type >> mode;
@@ -1195,12 +1326,28 @@ ObjectTypeAndID InputStream::readPrimitiveSet(InputUserData& ud)
     if (typeName.empty()) typeName = type._name;
     if (typeName.empty() || typeName == "PrimitiveType") typeName = "PrimitiveSet";
 
+    const char* osgClass = "osg::PrimitiveSet";
+    switch (type.get())
+    {
+    case ID_DRAWARRAYS:          osgClass = "osg::DrawArrays"; break;
+    case ID_DRAWARRAY_LENGTH:    osgClass = "osg::DrawArrayLengths"; break;
+    case ID_DRAWELEMENTS_UBYTE:  osgClass = "osg::DrawElementsUByte"; break;
+    case ID_DRAWELEMENTS_USHORT: osgClass = "osg::DrawElementsUShort"; break;
+    case ID_DRAWELEMENTS_UINT:   osgClass = "osg::DrawElementsUInt"; break;
+    default: break;
+    }
+
+    bool record = (ud.getVisitor() != NULL);
+    if (record) ud.notifyBeginObject(osgClass, std::to_string(primId));
+
+    unsigned int first = 0, count = 0;
+    std::vector<unsigned int> indices;
     switch (type.get())
     {
     case ID_DRAWARRAYS:
     {
-        int first, count;
-        *this >> first >> count;
+        int f = 0, c = 0; *this >> f >> c;
+        first = (unsigned int)f; count = (unsigned int)c;
         break;
     }
     case ID_DRAWARRAY_LENGTH:
@@ -1208,7 +1355,7 @@ ObjectTypeAndID InputStream::readPrimitiveSet(InputUserData& ud)
         unsigned int numPrimitives = 0;
         *this >> numPrimitives >> BEGIN_BRACKET;
         for (unsigned int i = 0; i < numPrimitives; ++i)
-        { unsigned int v; *this >> v; }
+        { unsigned int v; *this >> v; if (record) indices.push_back(v); }
         *this >> END_BRACKET;
         break;
     }
@@ -1218,6 +1365,7 @@ ObjectTypeAndID InputStream::readPrimitiveSet(InputUserData& ud)
     {
         unsigned int numIndices = 0;
         *this >> numIndices >> BEGIN_BRACKET;
+        count = numIndices;
         if (isBinary())
         {
             unsigned int compSize = (type.get() == ID_DRAWELEMENTS_UBYTE) ? CHAR_SIZE :
@@ -1225,11 +1373,20 @@ ObjectTypeAndID InputStream::readPrimitiveSet(InputUserData& ud)
             std::vector<char> buffer;
             buffer.resize(numIndices * compSize);
             if (!buffer.empty()) readComponentArray(&buffer[0], numIndices, 1, compSize);
+            if (record)
+            {
+                for (unsigned int i = 0; i < numIndices; ++i)
+                {
+                    unsigned long long raw = 0;
+                    std::memcpy(&raw, &buffer[i * compSize], compSize);
+                    indices.push_back((unsigned int)raw);
+                }
+            }
         }
         else
         {
             for (unsigned int i = 0; i < numIndices; ++i)
-            { unsigned int v; *this >> v; }
+            { unsigned int v; *this >> v; if (record) indices.push_back(v); }
         }
         *this >> END_BRACKET;
         break;
@@ -1237,10 +1394,20 @@ ObjectTypeAndID InputStream::readPrimitiveSet(InputUserData& ud)
     default:
         break;
     }
-    if (getException()) return ObjectTypeAndID();
+    if (getException())
+    {
+        if (record) ud.notifyEndObject();
+        return ObjectTypeAndID();
+    }
+
+    if (record)
+    {
+        ud.notifyPrimitiveData(mode.get(), first, count, indices);
+        ud.notifyEndObject();
+    }
 
     (void)numInstances;
-    return ObjectTypeAndID(typeName, "");
+    return ObjectTypeAndID(typeName, std::to_string(primId));
 }
 
 ObjectTypeAndID InputStream::readImage(InputUserData& ud)
@@ -1279,6 +1446,16 @@ ObjectTypeAndID InputStream::readImage(InputUserData& ud)
     *this >> PROPERTY("WriteHint") >> writeHint >> decision;
     if (getException()) return ObjectTypeAndID();
 
+    // Capture the image payload for the visitor / IR: the file name for
+    // external-image references, or the pixel data for inline images.
+    bool record = (ud.getVisitor() != NULL);
+    if (record) ud.notifyBeginObject("osg::Image", std::to_string(id));
+
+    std::string fileName = name;
+    int origin = 0, imgS = 0, imgT = 0, imgR = 1, internalFormat = 0;
+    int pixelFormat = 0, dataType = 0, packing = 0, allocationMode = 0;
+    std::vector<unsigned char> pixels;
+
     if (decision == IMAGE_INLINE_DATA)
     {
         if (isBinary())
@@ -1288,21 +1465,24 @@ ObjectTypeAndID InputStream::readImage(InputUserData& ud)
             //   pixelFormat, dataType, packing, mode (4 x int)
             //   size + image data
             //   levelSize + levels[i] (per-mipmap data sizes)
-            int origin, s, t, r, internalFormat;
-            *this >> origin >> s >> t >> r >> internalFormat;
-            int pixelFormat, dataType, packing, mode;
-            *this >> pixelFormat >> dataType >> packing >> mode;
-            if (getException()) return ObjectTypeAndID();
+            int s, t, r, internalFormatTmp;
+            *this >> origin >> s >> t >> r >> internalFormatTmp;
+            internalFormat = internalFormatTmp;
+            int pixelFormatTmp, dataTypeTmp, packingTmp, mode;
+            *this >> pixelFormatTmp >> dataTypeTmp >> packingTmp >> mode;
+            imgS = s; imgT = t; imgR = (r > 0 ? r : 1);
+            pixelFormat = pixelFormatTmp; dataType = dataTypeTmp;
+            packing = packingTmp; allocationMode = mode;
+            if (getException()) { if (record) ud.notifyEndObject(); return ObjectTypeAndID(); }
 
             unsigned int size = 0;
             *this >> size;
             if (size > 0)
             {
-                std::vector<char> buffer;
-                buffer.resize(size);
-                _in->readCharArray(&buffer[0], size);
+                pixels.resize(size);
+                _in->readCharArray((char*)&pixels[0], size);
             }
-            if (getException()) return ObjectTypeAndID();
+            if (getException()) { if (record) ud.notifyEndObject(); return ObjectTypeAndID(); }
 
             unsigned int levelSize = 0;
             *this >> levelSize;
@@ -1310,13 +1490,12 @@ ObjectTypeAndID InputStream::readImage(InputUserData& ud)
             {
                 unsigned int level = 0;
                 *this >> level;
-                if (getException()) return ObjectTypeAndID();
+                if (getException()) { if (record) ud.notifyEndObject(); return ObjectTypeAndID(); }
             }
         }
         else
         {
-            int origin, s, t, r, internalFormat;
-            int pixelFormat, dataType, packing, mode;
+            int s, t, r, mode;
             *this >> PROPERTY("Origin") >> origin;
             *this >> PROPERTY("Size") >> s >> t >> r;
             *this >> PROPERTY("InternalTextureFormat") >> internalFormat;
@@ -1324,7 +1503,8 @@ ObjectTypeAndID InputStream::readImage(InputUserData& ud)
             *this >> PROPERTY("DataType") >> dataType;
             *this >> PROPERTY("Packing") >> packing;
             *this >> PROPERTY("AllocationMode") >> mode;
-            if (getException()) return ObjectTypeAndID();
+            imgS = s; imgT = t; imgR = (r > 0 ? r : 1); allocationMode = mode;
+            if (getException()) { if (record) ud.notifyEndObject(); return ObjectTypeAndID(); }
 
             *this >> PROPERTY("Data");
             unsigned int levelSize = readSize();
@@ -1334,7 +1514,7 @@ ObjectTypeAndID InputStream::readImage(InputUserData& ud)
             {
                 std::string base64Data;
                 readWrappedString(base64Data);
-                if (getException()) return ObjectTypeAndID();
+                if (getException()) { if (record) ud.notifyEndObject(); return ObjectTypeAndID(); }
             }
             *this >> END_BRACKET;
         }
@@ -1343,19 +1523,18 @@ ObjectTypeAndID InputStream::readImage(InputUserData& ud)
     {
         if (isBinary())
         {
-            // Standard binary: size + embedded file data (read and discarded)
+            // Standard binary: size + embedded file data
             unsigned int size = 0;
             *this >> size;
             if (size > 0)
             {
-                std::vector<char> buffer;
-                buffer.resize(size);
-                _in->readCharArray(&buffer[0], size);
+                pixels.resize(size);
+                _in->readCharArray((char*)&pixels[0], size);
             }
-            if (getException()) return ObjectTypeAndID();
+            if (getException()) { if (record) ud.notifyEndObject(); return ObjectTypeAndID(); }
         }
     }
-    if (getException()) return ObjectTypeAndID();
+    if (getException()) { if (record) ud.notifyEndObject(); return ObjectTypeAndID(); }
 
     // The writer (OutputStream::writeImage) always follows the image payload with
     // the image's own osg::Object fields - Name / DataVariance / UserData(UserDataContainer)
@@ -1364,7 +1543,16 @@ ObjectTypeAndID InputStream::readImage(InputUserData& ud)
     // consume those bytes too, otherwise every following record is misaligned.
     {
         ObjectTypeAndID objectFields = readObjectFields("osg::Object", std::to_string(id), ud);
-        if (getException() || !objectFields.valid()) return ObjectTypeAndID();
+        if (getException() || !objectFields.valid())
+        { if (record) ud.notifyEndObject(); return ObjectTypeAndID(); }
+    }
+
+    if (record)
+    {
+        ud.notifyImageData(fileName, origin, imgS, imgT, imgR,
+                           internalFormat, pixelFormat, dataType,
+                           packing, allocationMode, pixels);
+        ud.notifyEndObject();
     }
 
     ObjectTypeAndID oid("osg::Image", std::to_string(id));
@@ -1529,7 +1717,11 @@ InputStream& InputStream::operator>>(osg::BoundingSphered& bs)
 // ---------------------------------------------------------------------------
 // InputUserData
 // ---------------------------------------------------------------------------
-InputUserData::InputUserData() {}
+InputUserData::InputUserData()
+    : _visitor(NULL), _ir(NULL)
+{
+}
+
 InputUserData::~InputUserData() {}
 
 void InputUserData::clear()
@@ -1537,6 +1729,61 @@ void InputUserData::clear()
     _objectMap.clear();
     _treeNodes.clear();
     _treeStack.clear();
+    _irStack.clear();
+    _treeToIr.clear();
+}
+
+void InputUserData::notifyBeginObject(const std::string& className, const std::string& id)
+{
+    if (_visitor) _visitor->beginObject(className, id);
+}
+
+void InputUserData::notifyEndObject()
+{
+    if (_visitor) _visitor->endObject();
+}
+
+void InputUserData::notifyArrayData(int components, const std::vector<double>& values)
+{
+    if (_visitor) _visitor->arrayData(components, values);
+}
+
+void InputUserData::notifyPrimitiveData(int mode, unsigned int first, unsigned int count,
+                                        const std::vector<unsigned int>& indices)
+{
+    if (_visitor) _visitor->primitiveData(mode, first, count, indices);
+}
+
+void InputUserData::notifyImageData(const std::string& fileName, int origin,
+                                    int width, int height, int depth,
+                                    int internalFormat, int pixelFormat, int dataType,
+                                    int packing, int allocationMode,
+                                    const std::vector<unsigned char>& pixels)
+{
+    if (_visitor) _visitor->imageData(fileName, origin, width, height, depth,
+                                      internalFormat, pixelFormat, dataType,
+                                      packing, allocationMode, pixels);
+}
+
+void InputUserData::emitCommand(const char* name, const std::vector<IRArg>& args)
+{
+    if (_ir) _ir->emitCommand(currentIR(), name ? name : "", args);
+    if (_visitor) _visitor->command(name ? name : "", args);
+}
+
+void InputUserData::emitCommand(const ObjectTypeAndID& parent, const char* name,
+                                const std::vector<IRArg>& args)
+{
+    // Explicit-target commands (e.g. an Array's setBinding) are recorded against
+    // the addressed object in the IR. They are not forwarded to the visitor,
+    // which only tracks the current object scope (v>=112 files carry array
+    // binding/normalize through the Array object's own serializers instead).
+    if (_ir)
+    {
+        int target = _ir->resolve(parent._type, parent._id);
+        if (target < 0) target = currentIR();
+        _ir->emitCommand(target, name ? name : "", args);
+    }
 }
 
 ObjectTypeAndID InputUserData::readObjectFromStream(InputStream& is, const std::string& type)
@@ -1570,20 +1817,12 @@ ObjectTypeAndID InputUserData::readObjectFromStream(InputStream& is, const std::
         return oid;
     }
 
-    bool hasObject = false;
-    is >> hasObject;
-    if (!hasObject) return ObjectTypeAndID();
-    if (is.getException()) return ObjectTypeAndID();
-
-    // ASCII: the property name has already been consumed by matchString;
-    // what follows is BEGIN_BRACKET + object + END_BRACKET.
-    is >> is.BEGIN_BRACKET;
-    if (is.getException()) return ObjectTypeAndID();
-
-    if (type == "osg::Array") oid = is.readArray(*this);
-    else if (type == "osg::PrimitiveSet") oid = is.readPrimitiveSet(*this);
-    else oid = is.readObject(*this);
-
-    is >> is.END_BRACKET;
-    return oid;
+    // ASCII: the property name has already been consumed by matchString. Arrays
+    // and primitive sets are self-delimiting (they read their own ArrayID/size
+    // braces); other objects are a plain className + fields, with any wrapping
+    // braces / has-object flag handled by the caller (user serializer or
+    // ObjectSerializer). This keeps both call conventions consistent.
+    if (type == "osg::Array") return is.readArray(*this);
+    if (type == "osg::PrimitiveSet") return is.readPrimitiveSet(*this);
+    return is.readObject(*this);
 }

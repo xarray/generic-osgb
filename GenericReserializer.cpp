@@ -1,6 +1,8 @@
 #include "GenericReserializer.h"
 using namespace osgVerse;
 
+const std::string SerializerVisitor::_emptyProperty = "";
+
 void SerializerVisitor::traverse(WrappableSerializer& obj)
 {
     if (_propertyList.empty() || !_manager) return;
@@ -13,7 +15,8 @@ void SerializerVisitor::applyValue(BaseSerializer& obj)
     std::type_index typeID(typeid(obj));
     SerializerMap::iterator it = _registry.find(typeID);
     if (it != _registry.end()) it->second(obj);
-    else std::cerr << "[SerializerVisitor] No callback for " << typeID.name() << "\n";
+    // Unregistered value serializer types are silently ignored: an engine
+    // registers only the types it handles.
 }
 
 void Rewrapper::splitAssociates(const std::string& src)
@@ -151,62 +154,65 @@ namespace
 
     // Read a single element using the element-type token of the VectorSerializer.
     // The token may carry the "osgDB::BaseSerializer::" prefix (macro #TYPE
-    // expansion); strip it here.
-    void readVectorElement(osgVerse::InputStream& is, const std::string& rawType)
+    // expansion); strip it here. Numeric components are appended to `out`
+    // (component count returned), so an engine visitor can rebuild the array.
+    int readVectorElement(osgVerse::InputStream& is, const std::string& rawType,
+                          std::vector<double>* out)
     {
         std::string t = rawType;
         std::string::size_type p = t.rfind("::");
         if (p != std::string::npos) t = t.substr(p + 2);
 
-        if (t == "RW_BOOL") { bool v; is >> v; }
-        else if (t == "RW_CHAR") { char v; is >> v; }
-        else if (t == "RW_UCHAR") { unsigned char v; is >> v; }
-        else if (t == "RW_SHORT") { short v; is >> v; }
-        else if (t == "RW_USHORT") { unsigned short v; is >> v; }
-        else if (t == "RW_INT") { int v; is >> v; }
-        else if (t == "RW_UINT") { unsigned int v; is >> v; }
-        else if (t == "RW_LONG") { long v; is >> v; }
-        else if (t == "RW_ULONG") { unsigned long v; is >> v; }
-        else if (t == "RW_FLOAT") { float v; is >> v; }
-        else if (t == "RW_DOUBLE") { double v; is >> v; }
-        else if (t == "RW_VEC2B") { osg::Vec2b v; is >> v; }
-        else if (t == "RW_VEC2UB") { osg::Vec2ub v; is >> v; }
-        else if (t == "RW_VEC2S") { osg::Vec2s v; is >> v; }
-        else if (t == "RW_VEC2US") { osg::Vec2us v; is >> v; }
-        else if (t == "RW_VEC2I") { osg::Vec2i v; is >> v; }
-        else if (t == "RW_VEC2UI") { osg::Vec2ui v; is >> v; }
-        else if (t == "RW_VEC2F") { osg::Vec2f v; is >> v; }
-        else if (t == "RW_VEC2D") { osg::Vec2d v; is >> v; }
-        else if (t == "RW_VEC3B") { osg::Vec3b v; is >> v; }
-        else if (t == "RW_VEC3UB") { osg::Vec3ub v; is >> v; }
-        else if (t == "RW_VEC3S") { osg::Vec3s v; is >> v; }
-        else if (t == "RW_VEC3US") { osg::Vec3us v; is >> v; }
-        else if (t == "RW_VEC3I") { osg::Vec3i v; is >> v; }
-        else if (t == "RW_VEC3UI") { osg::Vec3ui v; is >> v; }
-        else if (t == "RW_VEC3F") { osg::Vec3f v; is >> v; }
-        else if (t == "RW_VEC3D") { osg::Vec3d v; is >> v; }
-        else if (t == "RW_VEC4B") { osg::Vec4b v; is >> v; }
-        else if (t == "RW_VEC4UB") { osg::Vec4ub v; is >> v; }
-        else if (t == "RW_VEC4S") { osg::Vec4s v; is >> v; }
-        else if (t == "RW_VEC4US") { osg::Vec4us v; is >> v; }
-        else if (t == "RW_VEC4I") { osg::Vec4i v; is >> v; }
-        else if (t == "RW_VEC4UI") { osg::Vec4ui v; is >> v; }
-        else if (t == "RW_VEC4F") { osg::Vec4f v; is >> v; }
-        else if (t == "RW_VEC4D") { osg::Vec4d v; is >> v; }
-        else if (t == "RW_QUAT") { osg::Quat v; is >> v; }
-        else if (t == "RW_PLANE") { osg::Plane v; is >> v; }
-        else if (t == "RW_MATRIX" || t == "RW_MATRIXF") { osg::Matrixf v; is >> v; }
-        else if (t == "RW_MATRIXD") { osg::Matrixd v; is >> v; }
-        else if (t == "RW_BOUNDINGBOXF") { osg::BoundingBoxf v; is >> v; }
-        else if (t == "RW_BOUNDINGBOXD" || t == "RW_BOUNDINGBOX") { osg::BoundingBoxd v; is >> v; }
-        else if (t == "RW_BOUNDINGSPHEREF") { osg::BoundingSpheref v; is >> v; }
-        else if (t == "RW_BOUNDINGSPHERED" || t == "RW_BOUNDINGSPHERE") { osg::BoundingSphered v; is >> v; }
-        else if (t == "RW_STRING") { std::string v; is.readWrappedString(v); }
-        else if (t == "RW_GLENUM") { osgVerse::ObjectGLenum v; is >> v; }
+        if (t == "RW_BOOL") { bool v; is >> v; if (out) out->push_back(v ? 1.0 : 0.0); return 1; }
+        else if (t == "RW_CHAR") { char v; is >> v; if (out) out->push_back((double)v); return 1; }
+        else if (t == "RW_UCHAR") { unsigned char v; is >> v; if (out) out->push_back((double)v); return 1; }
+        else if (t == "RW_SHORT") { short v; is >> v; if (out) out->push_back((double)v); return 1; }
+        else if (t == "RW_USHORT") { unsigned short v; is >> v; if (out) out->push_back((double)v); return 1; }
+        else if (t == "RW_INT") { int v; is >> v; if (out) out->push_back((double)v); return 1; }
+        else if (t == "RW_UINT") { unsigned int v; is >> v; if (out) out->push_back((double)v); return 1; }
+        else if (t == "RW_LONG") { long v; is >> v; if (out) out->push_back((double)v); return 1; }
+        else if (t == "RW_ULONG") { unsigned long v; is >> v; if (out) out->push_back((double)v); return 1; }
+        else if (t == "RW_FLOAT") { float v; is >> v; if (out) out->push_back((double)v); return 1; }
+        else if (t == "RW_DOUBLE") { double v; is >> v; if (out) out->push_back(v); return 1; }
+        else if (t == "RW_VEC2B") { osg::Vec2b v; is >> v; if (out) for (int i = 0; i < 2; ++i) out->push_back((double)v._v[i]); return 2; }
+        else if (t == "RW_VEC2UB") { osg::Vec2ub v; is >> v; if (out) for (int i = 0; i < 2; ++i) out->push_back((double)v._v[i]); return 2; }
+        else if (t == "RW_VEC2S") { osg::Vec2s v; is >> v; if (out) for (int i = 0; i < 2; ++i) out->push_back((double)v._v[i]); return 2; }
+        else if (t == "RW_VEC2US") { osg::Vec2us v; is >> v; if (out) for (int i = 0; i < 2; ++i) out->push_back((double)v._v[i]); return 2; }
+        else if (t == "RW_VEC2I") { osg::Vec2i v; is >> v; if (out) for (int i = 0; i < 2; ++i) out->push_back((double)v._v[i]); return 2; }
+        else if (t == "RW_VEC2UI") { osg::Vec2ui v; is >> v; if (out) for (int i = 0; i < 2; ++i) out->push_back((double)v._v[i]); return 2; }
+        else if (t == "RW_VEC2F") { osg::Vec2f v; is >> v; if (out) for (int i = 0; i < 2; ++i) out->push_back((double)v._v[i]); return 2; }
+        else if (t == "RW_VEC2D") { osg::Vec2d v; is >> v; if (out) for (int i = 0; i < 2; ++i) out->push_back(v._v[i]); return 2; }
+        else if (t == "RW_VEC3B") { osg::Vec3b v; is >> v; if (out) for (int i = 0; i < 3; ++i) out->push_back((double)v._v[i]); return 3; }
+        else if (t == "RW_VEC3UB") { osg::Vec3ub v; is >> v; if (out) for (int i = 0; i < 3; ++i) out->push_back((double)v._v[i]); return 3; }
+        else if (t == "RW_VEC3S") { osg::Vec3s v; is >> v; if (out) for (int i = 0; i < 3; ++i) out->push_back((double)v._v[i]); return 3; }
+        else if (t == "RW_VEC3US") { osg::Vec3us v; is >> v; if (out) for (int i = 0; i < 3; ++i) out->push_back((double)v._v[i]); return 3; }
+        else if (t == "RW_VEC3I") { osg::Vec3i v; is >> v; if (out) for (int i = 0; i < 3; ++i) out->push_back((double)v._v[i]); return 3; }
+        else if (t == "RW_VEC3UI") { osg::Vec3ui v; is >> v; if (out) for (int i = 0; i < 3; ++i) out->push_back((double)v._v[i]); return 3; }
+        else if (t == "RW_VEC3F") { osg::Vec3f v; is >> v; if (out) for (int i = 0; i < 3; ++i) out->push_back((double)v._v[i]); return 3; }
+        else if (t == "RW_VEC3D") { osg::Vec3d v; is >> v; if (out) for (int i = 0; i < 3; ++i) out->push_back(v._v[i]); return 3; }
+        else if (t == "RW_VEC4B") { osg::Vec4b v; is >> v; if (out) for (int i = 0; i < 4; ++i) out->push_back((double)v._v[i]); return 4; }
+        else if (t == "RW_VEC4UB") { osg::Vec4ub v; is >> v; if (out) for (int i = 0; i < 4; ++i) out->push_back((double)v._v[i]); return 4; }
+        else if (t == "RW_VEC4S") { osg::Vec4s v; is >> v; if (out) for (int i = 0; i < 4; ++i) out->push_back((double)v._v[i]); return 4; }
+        else if (t == "RW_VEC4US") { osg::Vec4us v; is >> v; if (out) for (int i = 0; i < 4; ++i) out->push_back((double)v._v[i]); return 4; }
+        else if (t == "RW_VEC4I") { osg::Vec4i v; is >> v; if (out) for (int i = 0; i < 4; ++i) out->push_back((double)v._v[i]); return 4; }
+        else if (t == "RW_VEC4UI") { osg::Vec4ui v; is >> v; if (out) for (int i = 0; i < 4; ++i) out->push_back((double)v._v[i]); return 4; }
+        else if (t == "RW_VEC4F") { osg::Vec4f v; is >> v; if (out) for (int i = 0; i < 4; ++i) out->push_back((double)v._v[i]); return 4; }
+        else if (t == "RW_VEC4D") { osg::Vec4d v; is >> v; if (out) for (int i = 0; i < 4; ++i) out->push_back(v._v[i]); return 4; }
+        else if (t == "RW_QUAT") { osg::Quat v; is >> v; if (out) for (int i = 0; i < 4; ++i) out->push_back(v._v[i]); return 4; }
+        else if (t == "RW_PLANE") { osg::Plane v; is >> v; if (out) for (int i = 0; i < 4; ++i) out->push_back(v._v[i]); return 4; }
+        else if (t == "RW_MATRIX" || t == "RW_MATRIXF") { osg::Matrixf v; is >> v; if (out) for (int i = 0; i < 16; ++i) out->push_back((double)v._m[i]); return 16; }
+        else if (t == "RW_MATRIXD") { osg::Matrixd v; is >> v; if (out) for (int i = 0; i < 16; ++i) out->push_back(v._m[i]); return 16; }
+        else if (t == "RW_BOUNDINGBOXF") { osg::BoundingBoxf v; is >> v; if (out) { for (int i = 0; i < 3; ++i) out->push_back((double)v._min._v[i]); for (int i = 0; i < 3; ++i) out->push_back((double)v._max._v[i]); } return 6; }
+        else if (t == "RW_BOUNDINGBOXD" || t == "RW_BOUNDINGBOX") { osg::BoundingBoxd v; is >> v; if (out) { for (int i = 0; i < 3; ++i) out->push_back(v._min._v[i]); for (int i = 0; i < 3; ++i) out->push_back(v._max._v[i]); } return 6; }
+        else if (t == "RW_BOUNDINGSPHEREF") { osg::BoundingSpheref v; is >> v; if (out) { for (int i = 0; i < 3; ++i) out->push_back((double)v._center._v[i]); out->push_back((double)v._radius); } return 4; }
+        else if (t == "RW_BOUNDINGSPHERED" || t == "RW_BOUNDINGSPHERE") { osg::BoundingSphered v; is >> v; if (out) { for (int i = 0; i < 3; ++i) out->push_back(v._center._v[i]); out->push_back(v._radius); } return 4; }
+        else if (t == "RW_STRING") { std::string v; is.readWrappedString(v); return 0; }
+        else if (t == "RW_GLENUM") { osgVerse::ObjectGLenum v; is >> v; return 0; }
         else
         {
             std::cerr << "[readVectorElement] Unhandled vector element type: "
                       << rawType << std::endl;
+            return -1;
         }
     }
 
@@ -214,6 +220,7 @@ namespace
     {
         osgVerse::VectorSerializer* vs = dynamic_cast<osgVerse::VectorSerializer*>(&s);
         if (!vs) return false;
+        vs->_values.clear(); vs->_numComponents = 0;
 
         unsigned int size = 0;
         is >> size;
@@ -223,7 +230,8 @@ namespace
             if (!is.isBinary()) is >> is.BEGIN_BRACKET;
             for (unsigned int i = 0; i < size; ++i)
             {
-                readVectorElement(is, vs->_type);
+                int n = readVectorElement(is, vs->_type, &vs->_values);
+                if (n > 0) vs->_numComponents = n;
                 if (is.getException()) return true;
             }
             if (!is.isBinary()) is >> is.END_BRACKET;
@@ -255,6 +263,7 @@ namespace
     bool readObjectListValue(osgVerse::InputStream& is, osgVerse::InputUserData& ud,
                              osgVerse::ListSerializer<osgVerse::ObjectTypeAndID>& ls)
     {
+        ls._elements.clear();
         unsigned int size = 0; is >> size;
         if (size > 0)
         {
@@ -290,6 +299,7 @@ namespace
                 }
                 else oid = is.readObject(ud);
                 if (i == 0) ls._v0 = oid;
+                ls._elements.push_back(oid);
                 if (is.getException()) return true;
             }
             if (!is.isBinary()) is >> is.END_BRACKET;
@@ -360,15 +370,23 @@ namespace osgVerse
         // directly (e.g. Geometry's VertexData) have their own bool flags.
         if (ObjectSerializer* os_ = dynamic_cast<ObjectSerializer*>(&s))
         {
+            os_->_readValue = ObjectTypeAndID();
             if (is.isBinary())
             {
                 bool hasObject = false;
                 is >> hasObject;
-                if (hasObject) (void)is.readObject(ud);
+                if (hasObject) os_->_readValue = is.readObject(ud);
             }
             else
             {
-                (void)ud.readObjectFromStream(is, os_->_type);
+                // ASCII also carries the has-object flag (e.g. "StateSet TRUE { ... }").
+                bool hasObject = false; is >> hasObject;
+                if (hasObject)
+                {
+                    is >> is.BEGIN_BRACKET;
+                    os_->_readValue = ud.readObjectFromStream(is, os_->_type);
+                    is >> is.END_BRACKET;
+                }
             }
             return true;
         }
@@ -376,10 +394,11 @@ namespace osgVerse
         // Image serializer
         if (ImageSerializer* is_ = dynamic_cast<ImageSerializer*>(&s))
         {
+            is_->_readValue = ObjectTypeAndID();
             if (is.isBinary())
             {
                 bool hasObject = false; is >> hasObject;
-                if (hasObject) (void)is.readImage(ud);
+                if (hasObject) is_->_readValue = is.readImage(ud);
             }
             else
             {
@@ -387,7 +406,7 @@ namespace osgVerse
                 if (hasObject)
                 {
                     is >> is.BEGIN_BRACKET;
-                    (void)is.readImage(ud);
+                    is_->_readValue = is.readImage(ud);
                     is >> is.END_BRACKET;
                 }
             }

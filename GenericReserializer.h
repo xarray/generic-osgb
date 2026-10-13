@@ -14,6 +14,7 @@
 #include <cfloat>
 #include "GenericMath.h"
 #include "GenericInputStream.h"
+#include "SceneIR.h"
 
 extern "C"
 {
@@ -33,6 +34,8 @@ namespace osgVerse
     struct StringSerializer;
     struct EnumSerializer;
     template<typename T> struct ValueSerializer;
+    template<typename T> struct ListSerializer;
+    struct BitFlagSerializer;
     class RewrapperManager;
 
     class SerializerVisitor
@@ -48,6 +51,8 @@ namespace osgVerse
         virtual void apply(StringSerializer& obj) {}
         virtual void apply(EnumSerializer& obj) {}
         virtual void apply(GLenumSerializer& obj) {}
+        virtual void apply(BitFlagSerializer& obj) {}
+        virtual void apply(ListSerializer<ObjectTypeAndID>& obj) {}
 
         template<typename T>
         void registerType(std::function<void(ValueSerializer<T>&)> func)
@@ -62,9 +67,33 @@ namespace osgVerse
         InputStream* getInputStream() { return _is; }
         InputUserData* getUserData() { return _ud; }
 
+        // Engine extension points. A visitor subclass rebuilds the scene in a
+        // concrete engine: beginObject() creates the engine object, apply()/the
+        // serializer overloads set properties from the values already read by
+        // the InputStream, command() receives explicit user-serializer commands
+        // (addChild, setMode, ...), and endObject() closes the object scope.
+        virtual void beginObject(const std::string& className, const std::string& id) {}
+        virtual void endObject() {}
+        virtual void command(const std::string& name, const std::vector<IRArg>& args) {}
+
+        // Data-bearing objects that the legacy/compact readers (readArray /
+        // readPrimitiveSet / readImage) do not expose through the serializer
+        // channel. Each is preceded by beginObject(className, id) and followed
+        // by endObject(), so a visitor can create/annotate the object.
+        virtual void arrayData(int components, const std::vector<double>& values) {}
+        virtual void primitiveData(int mode, unsigned int first, unsigned int count,
+                                   const std::vector<unsigned int>& indices) {}
+        virtual void imageData(const std::string& fileName, int origin,
+                               int width, int height, int depth,
+                               int internalFormat, int pixelFormat, int dataType,
+                               int packing, int allocationMode,
+                               const std::vector<unsigned char>& pixels) {}
+
         void push(const std::string& n) { _propertyList.push(n); }
         void pop() { _propertyList.pop(); }
         const std::stack<std::string>& getPropertyList() const { return _propertyList; }
+        const std::string& currentProperty() const
+        { return _propertyList.empty() ? _emptyProperty : _propertyList.top(); }
 
     protected:
         void traverse(WrappableSerializer& obj);
@@ -74,6 +103,7 @@ namespace osgVerse
         SerializerMap _registry; RewrapperManager* _manager; int _inputVersion;
         InputStream* _is; InputUserData* _ud;
         std::stack<std::string> _propertyList;
+        static const std::string _emptyProperty;
     };
 
     // Type-dispatched read: fills the serializer's value from an InputStream.
@@ -96,16 +126,19 @@ namespace osgVerse
     };
 
     struct WrappableSerializer : public BaseSerializer { std::string _type; };
-    struct ObjectSerializer : public WrappableSerializer { META_VISITOR() };
-    struct ImageSerializer : public WrappableSerializer { META_VISITOR() };
-    struct VectorSerializer : public BaseSerializer { std::string _type; META_VISITOR() };
+    struct ObjectSerializer : public WrappableSerializer
+    { ObjectTypeAndID _readValue; META_VISITOR() };
+    struct ImageSerializer : public WrappableSerializer
+    { ObjectTypeAndID _readValue; META_VISITOR() };
+    struct VectorSerializer : public BaseSerializer
+    { std::string _type; int _numComponents; std::vector<double> _values; META_VISITOR() };
     struct UserSerializer : public BaseSerializer { ReadFunc _reader; META_VISITOR() };
     struct BoolSerializer : public BaseSerializer { bool _v0; META_VISITOR() };
     struct StringSerializer : public BaseSerializer { std::string _v0; META_VISITOR() };
     struct GLenumSerializer : public BaseSerializer { std::string _type; unsigned int _v0; META_VISITOR() };
     template<typename T> struct ValueSerializer : public BaseSerializer { T _v0; bool _hex; META_VISITOR() };
     template<typename T> struct ListSerializer : public BaseSerializer
-    { T _v0; std::string _elemType; META_VISITOR() };
+    { T _v0; std::string _elemType; std::vector<T> _elements; META_VISITOR() };
 
     struct EnumSerializer : public BaseSerializer
     { std::string _v0; std::set<std::string> _values; META_VISITOR() };
