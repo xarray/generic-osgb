@@ -8,6 +8,9 @@ cmake_install.cmake
 Makefile
 CTestTestfile.cmake
 
+# Emscripten output for the three.js example (built from wrappers_wasm.cpp)
+examples/threejs/dist/
+
 # Compiler intermediates
 *.o
 *.obj

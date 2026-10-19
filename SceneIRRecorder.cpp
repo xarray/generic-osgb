@@ -162,4 +162,16 @@ bool readSceneIR(const std::string& filename, SceneIR& ir, bool forceAscii)
     return oid.valid();
 }
 
+bool readSceneIR(std::istream& fin, SceneIR& ir, bool forceAscii)
+{
+    if (!loadRewrappers()) return false;
+
+    IRRecorderVisitor recorder(ir);
+    InputUserData ud;
+    ud.setVisitor(&recorder);
+
+    ObjectTypeAndID oid = readObjectFile(fin, ud, forceAscii);
+    return oid.valid();
+}
+
 }

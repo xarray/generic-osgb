@@ -16,6 +16,7 @@
 #include <vector>
 #include <map>
 #include <cstdint>
+#include <iosfwd>
 
 namespace osgVerse
 {
@@ -198,6 +199,10 @@ void buildScene(const SceneIR& ir, ISceneBuilder& builder);
 // layer (which owns the reader); declared here so an engine TU can call it
 // without pulling in the mini-osg math layer (which would clash with real osg).
 bool readSceneIR(const std::string& filename, SceneIR& ir, bool forceAscii = false);
+
+// Same, from an already-open stream (e.g. an in-memory buffer in a WASM build,
+// where there is no filesystem to open by name).
+bool readSceneIR(std::istream& fin, SceneIR& ir, bool forceAscii = false);
 
 }
 

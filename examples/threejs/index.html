@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>generic_wrappers - three.js .osgb viewer</title>
+<style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #101822;
+                 font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #dce3ea; }
+    #view { display: block; width: 100vw; height: 100vh; }
+    .panel { position: fixed; padding: 10px 12px; background: rgba(12,18,26,.82);
+             border: 1px solid #23303f; border-radius: 6px; backdrop-filter: blur(4px); }
+    #hud { top: 12px; left: 12px; min-width: 260px; }
+    #hud h1 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: #7fd1ff; }
+    #hud div { white-space: nowrap; }
+    #stats { color: #9fb3c8; }
+    #model { color: #cfd8e3; word-break: break-all; white-space: normal; }
+    #controls { bottom: 12px; left: 12px; display: flex; align-items: center; gap: 10px; }
+    #controls label { display: flex; align-items: center; gap: 6px; color: #9fb3c8; }
+    input[type=range] { width: 150px; }
+    #status { position: fixed; inset: 0; display: none; pointer-events: none;
+              place-items: center; text-align: center;
+              padding: 40px; color: #ffb4b4; font-size: 14px; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.min.js",
+    "three/addons/": "./vendor/three/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="hud" class="panel">
+    <h1>generic_wrappers &rarr; three.js</h1>
+    <div id="model"></div>
+    <div id="stats">starting ...</div>
+    <div id="debug"></div>
+</div>
+
+<div id="controls" class="panel">
+    <label><input type="checkbox" id="useOsgRange"> use osg's own ranges</label>
+    <label><input type="checkbox" id="flipTexture"> mirror textures V</label>
+    <label>screen ratio
+        <input type="range" id="threshold" min="0" max="1" step="0.05" value="0.25">
+        <span id="thresholdValue">0.25</span>
+    </label>
+    <button id="zoomIn" type="button">zoom in</button>
+    <button id="zoomOut" type="button">zoom out</button>
+    <span style="color:#66788a">drag = orbit &middot; wheel/zoom = fly in to page detail</span>
+</div>
+
+<div id="status"></div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

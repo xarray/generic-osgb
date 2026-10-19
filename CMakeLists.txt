@@ -68,30 +68,15 @@ endfunction()
 add_executable(reserializing_test reserializing_test.cpp)
 link_generic_library(reserializing_test)
 
-add_executable(null_integration examples/null_integration.cpp)
+add_executable(null_integration examples/null/null_integration.cpp)
 link_generic_library(null_integration)
 
 # ---------------------------------------------------------------------------
-# Engine-specific examples (each may pull in its own engine SDK). Each engine is
-# enabled with -DENABLE_<ENGINE>=ON plus its -D<ENGINE>_ROOT=<sdk>.
-#   cmake -S . -B build -DENABLE_OSG=ON -DOSG_ROOT=/path/to/osg-sdk
-#   cmake -S . -B build -DENABLE_VSG=ON -DVSG_ROOT=/path/to/vsg-sdk
+# Engine-specific examples: one sub-directory per engine under examples/.
+#   examples/null/      zero-dependency IR dump
+#   examples/vsg/       VulkanSceneGraph (-DENABLE_VSG=ON -DVSG_ROOT=<sdk>)
+#   examples/threejs/   three.js / WebGL (built under Emscripten, see below)
 # ---------------------------------------------------------------------------
-option(ENABLE_OSG "Build the OpenSceneGraph integration example" OFF)
-set(OSG_ROOT "" CACHE PATH "OpenSceneGraph SDK root (include/ + lib/)")
-
-if(ENABLE_OSG)
-    if(NOT OSG_ROOT)
-        message(FATAL_ERROR "OSG_ROOT is required when ENABLE_OSG=ON")
-    endif()
-
-    add_executable(osg_integration examples/osg_integration.cpp)
-    target_include_directories(osg_integration PRIVATE ${OSG_ROOT}/include)
-    target_link_directories(osg_integration PRIVATE ${OSG_ROOT}/lib)
-    link_generic_library(osg_integration)
-    target_link_libraries(osg_integration PRIVATE
-        osgViewer osgGA osgDB osgUtil osg OpenThreads)
-endif()
 
 # ---------------------------------------------------------------------------
 # VulkanSceneGraph integration (uses the installed vsg / vsgXchange packages).
@@ -110,13 +95,36 @@ if(ENABLE_VSG)
     find_package(vsg REQUIRED)
     find_package(vsgXchange REQUIRED)
 
-    add_executable(vsg_integration examples/vsg_integration.cpp)
+    add_executable(vsg_integration examples/vsg/vsg_integration.cpp)
     link_generic_library(vsg_integration)
     target_link_libraries(vsg_integration PRIVATE vsg::vsg vsgXchange::vsgXchange)
 
     # Same adapter, but registered as a vsg::ReaderWriter so VSG's DatabasePager
     # can dynamically page osgb/osgt PagedLOD / ProxyNode children.
-    add_executable(vsg_plugin_integration examples/vsg_plugin_integration.cpp)
+    add_executable(vsg_plugin_integration examples/vsg/vsg_plugin_integration.cpp)
     link_generic_library(vsg_plugin_integration)
     target_link_libraries(vsg_plugin_integration PRIVATE vsg::vsg vsgXchange::vsgXchange)
+endif()
+
+# ---------------------------------------------------------------------------
+# three.js / WebGL example. Built only under Emscripten, which exposes the
+# reader to JavaScript through embind; the .js/.wasm land in
+# examples/threejs/dist/ next to the HTML/JS that consume them:
+#
+#   emcmake cmake -S . -B build-wasm -DENABLE_STATIC_LIBRARY=ON
+#   cmake --build build-wasm
+#   python3 examples/threejs/serve.py
+# ---------------------------------------------------------------------------
+if(EMSCRIPTEN)
+    add_executable(generic_osg_wasm examples/threejs/wrappers_wasm.cpp)
+    link_generic_library(generic_osg_wasm)
+    set_target_properties(generic_osg_wasm PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/threejs/dist)
+    target_link_options(generic_osg_wasm PRIVATE
+        --bind
+        "-sMODULARIZE=1"
+        "-sEXPORT_ES6=1"
+        "-sEXPORT_NAME=createGenericOSG"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sENVIRONMENT=web,node")
 endif()

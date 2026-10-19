@@ -8,6 +8,15 @@ The `generic_osg/` directory contains one translation unit per OSG class, adapte
 from OSG's own serializer sources so that the same read logic can be driven
 standalone.
 
+## Showcase
+
+The same `examples/data/Tile_1/Tile_1.osgb` paged scene, read by the native
+VSG example and by the three.js / WebAssembly example:
+
+| VSG (`examples/vsg`) | three.js / WebGL (`examples/threejs`) |
+|:---:|:---:|
+| ![VSG screenshot](screenshots/vsg.jpg) | ![three.js screenshot](screenshots/threejs.jpg) |
+
 ---
 
 ## 1. How it works (simulating OSG serialize wrappers)
@@ -180,22 +189,18 @@ in a browser, mount the asset (or embed it with `--preload-file`) instead.
 
 ### Engine examples
 
-Concrete engine adapters live under `examples/`; each one pulls in its own engine
-SDK and is disabled by default. All of them read the same neutral `SceneIR`, so
-they share one implementation strategy (create engine objects, then replay the
-recorded commands).
+Concrete engine adapters live in `examples/<engine>/`; each one pulls in its own
+engine SDK and is disabled by default. All of them read the same neutral
+`SceneIR`, so they share one implementation strategy (create engine objects, then
+replay the recorded commands).
 
-Engines are enabled with `-DENABLE_<ENGINE>=ON` and their `-D<ENGINE>_ROOT=<sdk>`.
+| Directory | Engine | Enabled with |
+|---|---|---|
+| `examples/null/` | none — prints what the IR contains | always built |
+| `examples/vsg/` | VulkanSceneGraph | `-DENABLE_VSG=ON -DVSG_ROOT=<sdk>` |
+| `examples/threejs/` | three.js / WebGL | Emscripten build, no option |
 
-**OpenSceneGraph** — rebuilds a real osg scene through
-`osgDB::ObjectWrapperManager` and renders it with `osgViewer`:
-
-```bash
-cmake -S . -B build -DENABLE_OSG=ON -DOSG_ROOT=/path/to/osg-sdk   # include/ + lib/
-cmake --build build
-./build/osg_integration <file.osgt|file.osgb>          # render
-./build/osg_integration <file.osgt|file.osgb> --list   # rebuild + report only
-```
+Sample data lives in `examples/data/` (a paged `.osgb` database).
 
 **VulkanSceneGraph (VSG)** — rebuilds the IR into VSG's default scene graph
 (`vsg::Group` / `vsg::MatrixTransform` / `vsg::LOD` / `vsg::Switch`, with
@@ -211,7 +216,7 @@ cmake --build build
 ./build/vsg_integration <file.osgt|file.osgb> --list   # rebuild + report only
 ```
 
-The adapter itself lives in `examples/vsg_scene_builder.h`, so it can also be
+The adapter itself lives in `examples/vsg/vsg_scene_builder.h`, so it can also be
 registered as a `vsg::ReaderWriter`. `vsg_plugin_integration` does exactly that,
 which turns `osg::PagedLOD` / `osg::ProxyNode` into `vsg::PagedLOD` and lets VSG's
 own `DatabasePager` stream the child `.osgb` files through the generic reader:
@@ -228,6 +233,24 @@ memory through `vsgXchange`, so databases that carry their JPEG/PNG textures
 inside the tile files render without any texture files on disk. See §4 for how
 the two VSG examples differ.
 
+**three.js / WebGL** — the reader is compiled to WebAssembly (embind) and the
+scene is rebuilt in JavaScript. Because the browser has no `DatabasePager`, the
+example ships a deliberately small one: each frame it walks the `vsg`-style
+paged nodes, tests their bounding sphere against the camera frustum and its
+screen-height ratio, and fetches + merges the next level only when the tile is
+both visible and big enough. See §4 for details.
+
+```bash
+source ~/Public/emsdk/emsdk_env.sh                     # or any Emscripten SDK
+emcmake cmake -S . -B build-wasm -DENABLE_STATIC_LIBRARY=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-wasm --target generic_osg_wasm     # -> examples/threejs/dist/*
+python3 examples/threejs/serve.py                      # http://localhost:8000/
+```
+
+The page loads `/data/Tile_1/Tile_1.osgb` by default; pass `?model=/data/<file>`
+to open another file, and `serve.py --data <dir>` to serve a different dataset
+directory under `/data/`.
+
 ### Directory layout
 
 ```
@@ -240,7 +263,10 @@ generic_osgshadow/      osgShadow       generic_osgui/         osgUI
 generic_osgga/          osgGA           generic_osgfx/         osgFX
 generic_osgviewer/      osgViewer       generic_osgtext/       osgText
 generic_osgutil/        osgUtil
-examples/               example programs (null_integration, osg_integration, ...)
+examples/null/          null_integration (zero-dependency IR dump)
+examples/vsg/           vsg_integration / vsg_plugin_integration
+examples/threejs/       WebGL example: wrappers_wasm.cpp, js/, serve.py
+examples/data/          sample .osgb database (paging test data)
 ```
 
 Every osg library shipped with OpenSceneGraph has been ported this way: create
@@ -271,13 +297,14 @@ references — so supporting a new engine means writing one of these classes.
 
 `examples/` currently contains:
 
-* **OSG (echo back)** — `osg_integration.cpp`: rebuilds real osg objects through
-  `osgDB::ObjectWrapperManager` and renders with `osgViewer`. Handy as the
-  reference for what osg itself would produce from the same file.
-* **VulkanSceneGraph** — the adapter lives in `vsg_scene_builder.h` and is shared
-  by two front ends: `vsg_integration.cpp` and `vsg_plugin_integration.cpp`.
-* **Null** — `null_integration.cpp`: zero-dependency, prints what the IR contains
-  (class/command histograms, scene tree, data payload summaries).
+* **Null** — `null/null_integration.cpp`: zero-dependency, prints what the IR
+  contains (class/command histograms, scene tree, data payload summaries).
+* **VulkanSceneGraph** — the adapter lives in `vsg/vsg_scene_builder.h` and is
+  shared by two front ends: `vsg_integration.cpp` and
+  `vsg_plugin_integration.cpp`.
+* **three.js / WebGL** — `threejs/`: the reader is built to WebAssembly and the
+  adapter is `threejs/js/sceneBuilder.js`; `threejs/js/databasePager.js` is a
+  minimal paging implementation (see below).
 
 ### VSG: `vsg_integration` vs `vsg_plugin_integration`
 
@@ -346,9 +373,69 @@ converted, with the reason for each, is in the header comment of
 * The Phong pipeline is created per geometry, so the first pass ignores `StateSet`
   inheritance and per-geometry state overrides.
 
+### three.js: the JavaScript pager
+
+`examples/threejs/` splits the work the same way the other adapters do, only the
+engine side is JavaScript:
+
+```
+fetch(.osgb)  ->  generic_osg_wasm.js (embind)  ->  SceneIR (plain JS object)
+              ->  js/sceneBuilder.js             ->  three.js scene graph
+              ->  js/databasePager.js            ->  streams the next LOD level
+```
+
+`wrappers_wasm.cpp` reuses the very same reader (`readSceneIR(std::istream&)`
+reads from the fetched bytes, since a browser has no filesystem) and hands the IR
+over as plain JS objects with typed arrays, so the adapter stays in JavaScript.
+
+`js/databasePager.js` deliberately does **not** reproduce osgDB's threaded
+load-and-merge machinery. Every frame it asks two questions per paged node:
+
+1. is its bounding sphere inside the camera frustum, and
+2. does it cover enough of the screen height
+   (`radius / distance / tan(fovY/2)`), where the threshold comes from osg's own
+   `setRange` max (`1 / (maxRange * tan(fovY/2))`) or from the UI slider?
+
+If both hold, the child file is fetched, read through the same WASM reader,
+converted with the same `sceneBuilder.js`, attached to the node, and the in-memory
+stand-in (osg's `children[1]`) is hidden. PagedLOD nodes found inside the loaded
+file are registered the same way, so paging continues down the tree. Loads are
+limited to a few in flight per frame.
+
+Tiles are also unloaded again: a resident tile that stays outside the frustum or
+below half of its load threshold for `expiryDelay` seconds is detached, its
+geometry/materials/textures are disposed and the node becomes loadable again (the
+in-memory stand-in is shown meanwhile). Fetched file bytes are kept in an LRU
+cache with a byte budget (`cacheLimit`, 64 MB by default), so revisiting a tile
+re-parses locally instead of hitting the network; the HUD reports resident /
+unloaded counts and cache usage.
+
+Adapter notes (same gaps as the VSG adapter, plus browser specifics):
+
+* Textures embedded in the `.osgb` are handed to the browser decoder as a `Blob`.
+  Note that `Texture.flipY` is **ignored for `ImageBitmap` sources**, so the osg
+  row order (`v = 0` at the bottom of the picture) has to be baked in at decode
+  time with `createImageBitmap(blob, { imageOrientation: 'flipY' })`; setting
+  `flipY` alone leaves every texture mirrored and makes the mesh sample the photo's
+  black padding. `mirror textures V` re-decodes them the other way, and a 1×1 white
+  placeholder keeps a missing texture from rendering black while it loads.
+* A geometry without a normal array is drawn with an unlit material
+  (`MeshBasicMaterial`): photogrammetry bakes its lighting into the texture, and
+  deriving normals instead yields `NaN` for degenerate triangles and black patches.
+  Only geometries that do carry normals get a Phong material.
+* All images of a file are decoded before its graph is built, so a tile appears
+  already textured instead of flashing white and swapping its texture in later.
+* External texture names are resolved relative to the file that references them
+  (`Images/clockface.JPG` next to the model), and a node's bounding sphere
+  (`PagedLOD::setCenter/setRadius`, or an explicit `InitialBound`) is used to
+  frame the camera — osg scenes are rarely centred on the origin.
+* osg assets are Z-up; the model is rotated into three's Y-up world, and the key
+  light is placed accordingly (otherwise terrain is lit from underneath and comes
+  out almost black). Photogrammetry tiles already carry their baked lighting, so
+  the ambient term dominates.
+
 Planned / to be filled in:
 
-* Web (three.js / WebGL / WebGPU) —
 * Babylon.js —
 * Godot —
 * Unity —
