@@ -48,10 +48,17 @@ This project re-implements that mechanism standalone:
   (see §3).
 * **Dispatch** — `SerializerVisitor` walks a wrapper and routes every serializer
   to its read path (`readSerializerValue`), keeping the reader generic.
-* **Math / base layer** — `GenericMath.h` defines a minimal `osg` namespace
+* **Math / base layer** — `GenericMath.h` defines a minimal stub set
   (`Referenced`/`ref_ptr`, `Vec<N,T>` and the `Vec2*/Vec3*/Vec4*` families,
   `Quat`, `Plane`, `Matrix`, `BoundingBox*`, `BoundingSphere*`, GL typedefs) so
   the adapted `generic_osg/*.cpp` sources compile with no `libosg`.
+  The stubs live in `GENERIC_OSG_NAMESPACE` (default `generic_wrappers_osg`), and
+  a namespace alias keeps the `osg::` spelling used by the adapted sources. This
+  is deliberate: if the stubs were emitted as `osg::Matrix`, `osg::Referenced`,
+  ..., linking this library together with the real OpenSceneGraph (typically with
+  static osg libraries on Windows) fails with duplicate/LNK2005 "already
+  defined" errors, because both sides define the same mangled names with
+  different layouts. Override `GENERIC_OSG_NAMESPACE` to pick another name.
 * **I/O layer** — `GenericInputStream.h/.cpp` provide `InputIterator`
   (`BinaryInputIterator` / `AsciiInputIterator`) and `InputStream`. The format is
   detected from the first 8 header bytes; `.osgt` is parsed as text, `.osgb` is

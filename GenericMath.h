@@ -1,14 +1,26 @@
 // GenericMath.h - Standalone math & base type layer for the generic_wrappers
 // re-implementation of the OpenSceneGraph serialization subsystem.
 //
-// This header intentionally defines a minimal set of types inside namespace
-// `osg` so that the (hand-modified) generic_osg serialization files can be
-// compiled WITHOUT linking against the real osg libraries. It only covers what
-// the read bodies and serializer macros actually need: reference counting,
-// math types, bounding types and GL typedefs.
+// This header intentionally defines a minimal set of types so that the
+// (hand-modified) generic_osg serialization files can be compiled WITHOUT
+// linking against the real osg libraries. It only covers what the read bodies
+// and serializer macros actually need: reference counting, math types,
+// bounding types and GL typedefs.
+//
+// The types live in GENERIC_OSG_NAMESPACE (default `generic_wrappers_osg`), not
+// in `osg`, and a namespace alias at the end of this header keeps the `osg::`
+// spelling used by the adapted sources. This is what allows the library to be
+// linked into an application that also links the real OpenSceneGraph without
+// duplicate `osg::Matrix` / `osg::Referenced` symbols at link time.
 
 #ifndef OSGVERSE_GENERIC_WRAPPERS_GENERIC_MATH_H
 #define OSGVERSE_GENERIC_WRAPPERS_GENERIC_MATH_H
+
+// All stub symbols are emitted under this namespace. Override it (for example
+// with -DGENERIC_OSG_NAMESPACE=my_stubs) if the default ever clashes.
+#ifndef GENERIC_OSG_NAMESPACE
+#define GENERIC_OSG_NAMESPACE generic_wrappers_osg
+#endif
 
 #include <cstdint>
 #include <cmath>
@@ -463,7 +475,7 @@ typedef char           GLchar;
 typedef std::int64_t   GLint64;
 typedef std::uint64_t  GLuint64;
 
-namespace osg {
+namespace GENERIC_OSG_NAMESPACE {
 
 // ---------------------------------------------------------------------------
 // Reference counting base + smart pointer
@@ -825,6 +837,23 @@ public:
     static const int DEFAULT_BIN = 0;
 };
 
-} // namespace osg
+} // namespace GENERIC_OSG_NAMESPACE
+
+// The adapted generic_osg sources (and a lot of existing user code) spell the
+// stub types as `osg::X`. An alias keeps that spelling working while all
+// symbols are actually emitted in GENERIC_OSG_NAMESPACE, so nothing collides
+// with a real OpenSceneGraph linked into the same binary.
+//
+// This matters on Windows in particular: when the real (static) osg libraries
+// and these stubs both define `osg::Matrix`, `osg::Referenced`, ... the linker
+// reports LNK2005 / "already defined" even though both definitions are inline,
+// because the two definitions are not identical (different layouts and bodies).
+//
+// Set GENERIC_OSG_NAMESPACE to a name of your choice to change the namespace,
+// or define GENERIC_OSG_NO_NAMESPACE_ALIAS if you must have a plain `osg`
+// namespace (then GENERIC_OSG_NAMESPACE has to be `osg` as well).
+#ifndef GENERIC_OSG_NO_NAMESPACE_ALIAS
+namespace osg = GENERIC_OSG_NAMESPACE;
+#endif
 
 #endif // OSGVERSE_GENERIC_WRAPPERS_GENERIC_MATH_H
