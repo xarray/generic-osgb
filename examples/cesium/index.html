@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>generic_wrappers - Cesium globe + OSGB overlay</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cesium@1.121.0/Build/Cesium/Widgets/widgets.css">
+<style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #05080c;
+                 font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #dce3ea; }
+    #cesium { position: absolute; inset: 0; }
+    /* The OSGB scene is drawn by three.js on a transparent canvas above Cesium.
+       All input goes to Cesium, which owns the globe camera. */
+    #overlay { position: absolute; inset: 0; pointer-events: none; }
+    .panel { position: fixed; padding: 10px 12px; background: rgba(12,18,26,.82);
+             border: 1px solid #23303f; border-radius: 6px; backdrop-filter: blur(4px); z-index: 5; }
+    #hud { top: 12px; left: 12px; min-width: 300px; }
+    #hud h1 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: #7fd1ff; }
+    #hud div { white-space: nowrap; }
+    #stats { color: #9fb3c8; }
+    #debug, #srs { color: #8093a6; font-size: 12px; }
+    #model { color: #cfd8e3; word-break: break-all; white-space: normal; }
+    #controls { bottom: 12px; left: 50%; transform: translateX(-50%);
+                display: flex; align-items: center; gap: 10px; }
+    #controls label { display: flex; align-items: center; gap: 6px; color: #9fb3c8; }
+    #status { position: fixed; inset: 0; display: none; pointer-events: none; z-index: 10;
+              place-items: center; text-align: center; padding: 40px;
+              color: #ffb4b4; font-size: 14px; }
+</style>
+<script>
+    // Cesium loads Workers/, Assets/ and ThirdParty/ relative to this URL.
+    // The example is online-only: the library and the basemap both come from
+    // the network.
+    window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.121.0/Build/Cesium/';
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "../threejs/vendor/three/three.module.min.js",
+    "three/addons/": "../threejs/vendor/three/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="cesium"></div>
+
+<div id="hud" class="panel">
+    <h1>generic_wrappers &rarr; Cesium globe</h1>
+    <div id="model"></div>
+    <div id="srs"></div>
+    <div id="stats">starting ...</div>
+    <div id="debug"></div>
+</div>
+
+<div id="controls" class="panel">
+    <label><input type="checkbox" id="useOsgRange"> use osg's own ranges</label>
+    <label><input type="checkbox" id="flipTexture"> mirror textures V</label>
+    <button id="resetView" type="button">model view</button>
+    <button id="globeView" type="button">globe view</button>
+    <span style="color:#66788a">drag = globe &middot; wheel = zoom</span>
+</div>
+
+<div id="status"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/cesium@1.121.0/Build/Cesium/Cesium.js"></script>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

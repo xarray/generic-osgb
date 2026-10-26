@@ -10,12 +10,12 @@ standalone.
 
 ## Showcase
 
-The same `examples/data/Tile_1/Tile_1.osgb` paged scene, read by the native
-VSG example and by the three.js / WebAssembly example:
+The same `examples/data/Tile_1/Tile_1.osgb` paged scene, read by the native VSG
+example, the three.js / WebAssembly viewer, and on a Cesium globe:
 
-| VSG (`examples/vsg`) | three.js / WebGL (`examples/threejs`) |
-|:---:|:---:|
-| ![VSG screenshot](screenshots/vsg.jpg) | ![three.js screenshot](screenshots/threejs.jpg) |
+| VSG (`examples/vsg`) | three.js / WebGL (`examples/threejs`) | CesiumJS globe (`examples/cesium`) |
+|:---:|:---:|:---:|
+| ![VSG screenshot](screenshots/vsg.jpg) | ![three.js screenshot](screenshots/threejs.jpg) | ![Cesium screenshot](screenshots/cesium.jpg) |
 
 ---
 
@@ -206,8 +206,10 @@ replay the recorded commands).
 | `examples/null/` | none — prints what the IR contains | always built |
 | `examples/vsg/` | VulkanSceneGraph | `-DENABLE_VSG=ON -DVSG_ROOT=<sdk>` |
 | `examples/threejs/` | three.js / WebGL | Emscripten build, no option |
+| `examples/cesium/` | CesiumJS globe + three.js overlay | CDN Cesium build, no option |
 
-Sample data lives in `examples/data/` (a paged `.osgb` database).
+Sample data lives in `examples/data/` (a paged `.osgb` database plus the
+`metadata.xml` that georeferences it).
 
 **VulkanSceneGraph (VSG)** — rebuilds the IR into VSG's default scene graph
 (`vsg::Group` / `vsg::MatrixTransform` / `vsg::LOD` / `vsg::Switch`, with
@@ -258,6 +260,33 @@ The page loads `/data/Tile_1/Tile_1.osgb` by default; pass `?model=/data/<file>`
 to open another file, and `serve.py --data <dir>` to serve a different dataset
 directory under `/data/`.
 
+**CesiumJS** — the model is placed on a Cesium globe. Cesium's own dynamic
+scheduler only understands 3D Tiles, glTF models and terrain; an
+`osg::PagedLOD` tree is none of those, so the JS `DatabasePager` from the
+three.js example is reused unchanged. Cesium supplies the globe, the
+georeferenced camera and the input handling, while the OSGB tiles are drawn by
+the same three.js adapter on a transparent canvas above it. `metadata.xml`
+(`ENU:latitude,longitude`) provides the local frame; see §4 for the coordinate
+handling.
+
+```bash
+python3 examples/cesium/serve.py        # http://localhost:8002/cesium/
+# ?model=/data/<file>&metadata=/data/metadata.xml&imagery=arcgis|osm|none
+# ?up=<origin height in metres>
+```
+
+The basemap is Esri World Imagery (`arcgis`, fetched from
+`services.arcgisonline.com`, no token required). `imagery=osm` uses
+OpenStreetMap tiles and `imagery=none` keeps the flat globe colour.
+`model view` / `globe view` snap the camera between the dataset and a ~8 km
+overview.
+
+CesiumJS 1.121.0 is loaded from jsDelivr
+(`cdn.jsdelivr.net/npm/cesium@1.121.0/Build/Cesium/`), so the example is
+online-only: both the library and the basemap come from the network. No terrain
+is configured: the model is shifted down so its ground surface sits on the
+ellipsoid (see §4), and `up=` offsets that base elevation.
+
 ### Directory layout
 
 ```
@@ -273,7 +302,8 @@ generic_osgutil/        osgUtil
 examples/null/          null_integration (zero-dependency IR dump)
 examples/vsg/           vsg_integration / vsg_plugin_integration
 examples/threejs/       WebGL example: wrappers_wasm.cpp, js/, serve.py
-examples/data/          sample .osgb database (paging test data)
+examples/cesium/        CesiumJS globe + the same three.js adapter/pager
+examples/data/          sample .osgb database + metadata.xml (paging test data)
 ```
 
 Every osg library shipped with OpenSceneGraph has been ported this way: create
@@ -440,6 +470,44 @@ Adapter notes (same gaps as the VSG adapter, plus browser specifics):
   light is placed accordingly (otherwise terrain is lit from underneath and comes
   out almost black). Photogrammetry tiles already carry their baked lighting, so
   the ambient term dominates.
+
+### Cesium: georeferencing the OSGB overlay
+
+`examples/cesium/` reads `examples/data/metadata.xml`:
+
+```xml
+<SRS>ENU:48.21221,124.61605</SRS>   <!-- latitude, longitude -->
+<SRSOrigin>0,0,0</SRSOrigin>
+```
+
+`Transforms.eastNorthUpToFixedFrame` turns that into the ENU-to-ECEF matrix
+(`SRSOrigin` is applied as a translation in the same frame). The important
+design choice is that the **three.js world is that ENU frame** (X east, Y north,
+Z up), so the tile geometry needs no per-vertex conversion and no rotation:
+
+* The initial Cesium view converts the model's bounding-sphere centre to ECEF
+  once, to place `Camera.flyToBoundingSphere`.
+* Every frame the Cesium camera is converted the other way — `positionWC`,
+  `directionWC` and `upWC` through the ECEF-to-ENU inverse matrix — and becomes
+  the three.js camera (`right = direction × up`, `fovy` → `fov`, near/far
+  clipped). The globe camera therefore also drives the pager, exactly as in the
+  three.js example.
+* Keeping the world local means the GPU only ever sees coordinates of a few
+  hundred metres, not the ~6.3e6 m ECEF values that would lose precision in
+  float32 shaders.
+* The file's z values put this site ~266 m above the ellipsoid, and the lowest
+  vertex belongs to a few degenerate triangles ~13 m below the real surface.
+  The ground height is therefore estimated from the triangle-area distribution
+  (5% area quantile of triangle-centroid z) and the whole model is shifted down
+  by that amount; the main terrain then sits within ~0.3 m of the ellipsoid.
+* `?up=<metres>` offsets the ENU origin ellipsoidally when the metadata carries
+  no vertical datum.
+
+Limitations: only `ENU:lat,lon` metadata is understood (an `EPSG:` SRS needs a
+proper projection/geoid step). Because Cesium and three.js each have their own
+depth buffer, the globe cannot occlude the overlaid tiles; with the default
+ellipsoid globe this is not visible, but a real-terrain setup would need a
+depth-aware composite.
 
 Planned / to be filled in:
 
