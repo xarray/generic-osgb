@@ -107,6 +107,34 @@ if(ENABLE_VSG)
 endif()
 
 # ---------------------------------------------------------------------------
+# Plain OpenGL 3.3 core example. FreeGLUT provides the window/input, GLEW the
+# GL entry points and stb_image (vendored, no external codec) the textures.
+#
+#   cmake -S . -B build -DENABLE_OPENGL=ON
+#   cmake --build build --target opengl_integration
+#   ./build/opengl_integration examples/data/Tile_1/Tile_1.osgb
+# ---------------------------------------------------------------------------
+option(ENABLE_OPENGL "Build the plain OpenGL core example" OFF)
+
+if(ENABLE_OPENGL)
+    find_package(OpenGL REQUIRED)
+    find_package(GLEW REQUIRED)
+    find_package(GLUT REQUIRED)
+
+    add_executable(opengl_integration
+        examples/opengl/opengl_integration.cpp
+        examples/opengl/gl_scene_builder.cpp
+        examples/opengl/image_decode.cpp)
+    link_generic_library(opengl_integration)
+
+    target_include_directories(opengl_integration PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/opengl/third_party
+        ${GLUT_INCLUDE_DIR})
+    target_link_libraries(opengl_integration PRIVATE
+        OpenGL::GL GLEW::GLEW ${GLUT_LIBRARIES})
+endif()
+
+# ---------------------------------------------------------------------------
 # three.js / WebGL example. Built only under Emscripten, which exposes the
 # reader to JavaScript through embind; the .js/.wasm land in
 # examples/threejs/dist/ next to the HTML/JS that consume them:

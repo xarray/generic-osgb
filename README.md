@@ -207,6 +207,7 @@ replay the recorded commands).
 | `examples/vsg/` | VulkanSceneGraph | `-DENABLE_VSG=ON -DVSG_ROOT=<sdk>` |
 | `examples/threejs/` | three.js / WebGL | Emscripten build, no option |
 | `examples/cesium/` | CesiumJS globe + three.js overlay | CDN Cesium build, no option |
+| `examples/opengl/` | plain OpenGL 3.3 core | `-DENABLE_OPENGL=ON` |
 
 Sample data lives in `examples/data/` (a paged `.osgb` database plus the
 `metadata.xml` that georeferences it).
@@ -241,6 +242,26 @@ Images embedded inside an `.osgb` (osg's "inline file" storage) are decoded from
 memory through `vsgXchange`, so databases that carry their JPEG/PNG textures
 inside the tile files render without any texture files on disk. See §4 for how
 the two VSG examples differ.
+
+**OpenGL 3.3 core** — a small desktop example with no engine SDK: the same
+SceneIR is replayed into VAOs/VBOs and drawn with FreeGLUT + GLEW. Embedded
+JPEG/PNG textures are decoded by the vendored `stb_image.h` in
+`examples/opengl/third_party/`, so there is no libjpeg/libpng dependency.
+`PagedLOD` children are loaded synchronously up to `--load-levels N` (0 keeps
+only the in-memory fallback), which is enough to inspect a real paged database:
+
+```bash
+cmake -S . -B build -DENABLE_OPENGL=ON
+cmake --build build --target opengl_integration
+./build/opengl_integration examples/data/Tile_1/Tile_1.osgb --load-levels 2
+./build/opengl_integration examples/data/Tile_1/Tile_1.osgb --list
+./build/opengl_integration examples/data/Tile_1/Tile_1.osgb --screenshot shot.ppm
+```
+
+Drag = orbit, wheel = zoom, `R` = reset, `Esc` = quit. `--screenshot` writes a
+PPM after the first frame, which is handy on headless machines. On Windows,
+FreeGLUT and GLEW are the only external packages (for example through vcpkg);
+the image decoder is compiled in.
 
 **three.js / WebGL** — the reader is compiled to WebAssembly (embind) and the
 scene is rebuilt in JavaScript. Because the browser has no `DatabasePager`, the
@@ -303,6 +324,7 @@ examples/null/          null_integration (zero-dependency IR dump)
 examples/vsg/           vsg_integration / vsg_plugin_integration
 examples/threejs/       WebGL example: wrappers_wasm.cpp, js/, serve.py
 examples/cesium/        CesiumJS globe + the same three.js adapter/pager
+examples/opengl/        plain OpenGL 3.3 core: FreeGLUT/GLEW + vendored stb_image
 examples/data/          sample .osgb database + metadata.xml (paging test data)
 ```
 
@@ -470,6 +492,30 @@ Adapter notes (same gaps as the VSG adapter, plus browser specifics):
   light is placed accordingly (otherwise terrain is lit from underneath and comes
   out almost black). Photogrammetry tiles already carry their baked lighting, so
   the ambient term dominates.
+
+### OpenGL core: a dependency-light adapter
+
+`examples/opengl/gl_scene_builder.cpp` implements the same `ISceneBuilder`
+interface as the VSG and three.js adapters, so it only translates IR commands:
+
+* object classification into group / transform / geometry / LOD / PagedLOD nodes,
+  plus the array, primitive, image, state-set, texture and material records;
+* `addChild`, `Matrix`, geometry array and state-set commands, and the
+  `setFileName` / `setRange` / `setCenter` / `setRadius` set used by LODs;
+* primitive sets are expanded to plain triangle/line/point lists (strips, fans,
+  quads and line loops are decomposed), because a geometry may mix topologies;
+* positions, normals, colours and texture coordinates are interleaved into one
+  VBO, with one VAO/EBO per expanded topology. Geometries without normals are
+  drawn unlit, matching the three.js adapter; culling is disabled because
+  photogrammetry winding is not always consistent.
+
+Textures are decoded by the vendored `stb_image.h` (`image_decode.cpp` compiles
+the implementation once): embedded "inline file" images and external files are
+both supported, rows are flipped to osg's bottom-up order, and the result is
+uploaded as `GL_RGBA8` with mipmaps. `--load-levels N` walks the PagedLOD child
+files synchronously at load time (recursively, with paths resolved relative to
+the parent tile); when a child file is resident the in-memory fallback is no
+longer drawn. There is no background pager or unloading in this example.
 
 ### Cesium: georeferencing the OSGB overlay
 
