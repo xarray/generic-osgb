@@ -24,6 +24,19 @@ WRAP_FUNCTIONS( WRAP_S, osg_Texture_WrapParameter::WRAP_S )
 WRAP_FUNCTIONS( WRAP_T, osg_Texture_WrapParameter::WRAP_T )
 WRAP_FUNCTIONS( WRAP_R, osg_Texture_WrapParameter::WRAP_R )
 
+#define WRAP_WRITERS( PROP, VALUE ) \
+    static bool write##PROP(OutputStream& os, OutputUserData& ud) { \
+        const IRCommand* cmd = ud.findCommandWithInt("setWrap", VALUE); \
+        unsigned int mode = (cmd && cmd->args.size() > 1) \
+            ? (unsigned int)irArgInt(cmd->args[1]) : 0; \
+        os << ObjectGLenum(mode, "GL") << std::endl; \
+        return true; \
+    }
+
+WRAP_WRITERS( WRAP_S, osg_Texture_WrapParameter::WRAP_S )
+WRAP_WRITERS( WRAP_T, osg_Texture_WrapParameter::WRAP_T )
+WRAP_WRITERS( WRAP_R, osg_Texture_WrapParameter::WRAP_R )
+
 #define FILTER_FUNCTIONS( PROP, VALUE ) \
     static bool read##PROP(InputStream& is, InputUserData& ud) { \
         DEF_GLENUM(mode); is >> mode; \
@@ -34,6 +47,18 @@ WRAP_FUNCTIONS( WRAP_R, osg_Texture_WrapParameter::WRAP_R )
 FILTER_FUNCTIONS( MIN_FILTER, osg_Texture_FilterParameter::MIN_FILTER )
 FILTER_FUNCTIONS( MAG_FILTER, osg_Texture_FilterParameter::MAG_FILTER )
 
+#define FILTER_WRITERS( PROP, VALUE ) \
+    static bool write##PROP(OutputStream& os, OutputUserData& ud) { \
+        const IRCommand* cmd = ud.findCommandWithInt("setFilter", VALUE); \
+        unsigned int mode = (cmd && cmd->args.size() > 1) \
+            ? (unsigned int)irArgInt(cmd->args[1]) : 0; \
+        os << ObjectGLenum(mode, "GL") << std::endl; \
+        return true; \
+    }
+
+FILTER_WRITERS( MIN_FILTER, osg_Texture_FilterParameter::MIN_FILTER )
+FILTER_WRITERS( MAG_FILTER, osg_Texture_FilterParameter::MAG_FILTER )
+
 #define GL_FORMAT_FUNCTIONS( PROP ) \
     static bool read##PROP( InputStream& is, InputUserData& ud ) { \
         DEF_GLENUM(mode); is >> mode; ud.add( "set" #PROP, mode.get() ); \
@@ -43,10 +68,29 @@ FILTER_FUNCTIONS( MAG_FILTER, osg_Texture_FilterParameter::MAG_FILTER )
 GL_FORMAT_FUNCTIONS( SourceFormat )
 GL_FORMAT_FUNCTIONS( SourceType )
 
+#define GL_FORMAT_WRITERS( PROP ) \
+    static bool write##PROP(OutputStream& os, OutputUserData& ud) { \
+        const IRArg* a = ud.findPropertyArg(#PROP); \
+        unsigned int mode = a ? (unsigned int)irArgInt(*a) : 0; \
+        os << ObjectGLenum(mode, "GL") << std::endl; \
+        return true; \
+    }
+
+GL_FORMAT_WRITERS( SourceFormat )
+GL_FORMAT_WRITERS( SourceType )
+
 static bool readInternalFormat(InputStream& is, InputUserData& ud)
 {
     DEF_GLENUM(mode); is >> mode;
     ud.add("setInternalFormat", mode.get());
+    return true;
+}
+
+static bool writeInternalFormat(OutputStream& os, OutputUserData& ud)
+{
+    const IRArg* a = ud.findPropertyArg("InternalFormat");
+    unsigned int mode = a ? (unsigned int)irArgInt(*a) : 0;
+    os << ObjectGLenum(mode, "GL") << std::endl;
     return true;
 }
 
@@ -67,6 +111,14 @@ static bool readImageAttachment(InputStream& is, InputUserData& ud)
     DummyImageAttachment attachment;
     is >> attachment.unit >> attachment.level >> attachment.layered
        >> attachment.layer >> attachment.access >> attachment.format;
+    return true;
+}
+
+static bool writeImageAttachment(OutputStream& os, OutputUserData& ud)
+{
+    // The reader keeps no payload for this deprecated member; emit its default.
+    os << (GLuint)0 << (GLint)0 << (GLboolean)0
+       << (GLint)0 << (GLenum)0 << (GLenum)0 << std::endl;
     return true;
 }
 
@@ -150,16 +202,37 @@ static bool readSwizzle(InputStream& is, InputUserData& ud)
     return true;
 }
 
+static bool writeSwizzle(OutputStream& os, OutputUserData& ud)
+{
+    // readSwizzle() only emits the decoded vector, so the property itself is
+    // not part of the IR: look up the command instead.
+    const IRCommand* cmd = ud.findCommand("setSwizzle");
+    const IRArg* a = (cmd && !cmd->args.empty()) ? &cmd->args[0] : NULL;
+
+    std::string result;
+    result.push_back(swizzleToCharacter(a ? (GLint)a->v[0] : GL_RED, 'R'));
+    result.push_back(swizzleToCharacter(a ? (GLint)a->v[1] : GL_GREEN, 'G'));
+    result.push_back(swizzleToCharacter(a ? (GLint)a->v[2] : GL_BLUE, 'B'));
+    result.push_back(swizzleToCharacter(a ? (GLint)a->v[3] : GL_ALPHA, 'A'));
+    os << result << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( Texture,
                          /*new osg::Texture*/NULL,
                          osg::Texture,
                          "osg::Object osg::StateAttribute osg::Texture" )
 {
     ADD_USER_SERIALIZER( WRAP_S );  // _wrap_s
+    ADD_USER_WRITER( WRAP_S );
     ADD_USER_SERIALIZER( WRAP_T );  // _wrap_t
+    ADD_USER_WRITER( WRAP_T );
     ADD_USER_SERIALIZER( WRAP_R );  // _wrap_r
+    ADD_USER_WRITER( WRAP_R );
     ADD_USER_SERIALIZER( MIN_FILTER );  // _min_filter
+    ADD_USER_WRITER( MIN_FILTER );
     ADD_USER_SERIALIZER( MAG_FILTER );  // _mag_filter
+    ADD_USER_WRITER( MAG_FILTER );
     ADD_FLOAT_SERIALIZER( MaxAnisotropy, 1.0f );  // _maxAnisotropy
     ADD_BOOL_SERIALIZER( UseHardwareMipMapGeneration, true );  // _useHardwareMipMapGeneration
     ADD_BOOL_SERIALIZER( UnRefImageDataAfterApply, false );  // _unrefImageDataAfterApply
@@ -169,42 +242,45 @@ REGISTER_OBJECT_WRAPPER( Texture,
     ADD_GLINT_SERIALIZER( BorderWidth, 0 );  // _borderWidth
 
     BEGIN_ENUM_SERIALIZER( InternalFormatMode, USE_IMAGE_DATA_FORMAT );
-        ADD_ENUM_VALUE( USE_IMAGE_DATA_FORMAT );
-        ADD_ENUM_VALUE( USE_USER_DEFINED_FORMAT );
-        ADD_ENUM_VALUE( USE_ARB_COMPRESSION );
-        ADD_ENUM_VALUE( USE_S3TC_DXT1_COMPRESSION );
-        ADD_ENUM_VALUE( USE_S3TC_DXT3_COMPRESSION );
-        ADD_ENUM_VALUE( USE_S3TC_DXT5_COMPRESSION );
-        ADD_ENUM_VALUE( USE_PVRTC_2BPP_COMPRESSION );
-        ADD_ENUM_VALUE( USE_PVRTC_4BPP_COMPRESSION );
-        ADD_ENUM_VALUE( USE_ETC_COMPRESSION );
-        ADD_ENUM_VALUE( USE_RGTC1_COMPRESSION );
-        ADD_ENUM_VALUE( USE_RGTC2_COMPRESSION );
-        ADD_ENUM_VALUE( USE_S3TC_DXT1c_COMPRESSION );
-        ADD_ENUM_VALUE( USE_S3TC_DXT1a_COMPRESSION );
+        ADD_ENUM_VALUE2( USE_IMAGE_DATA_FORMAT, 0 );
+        ADD_ENUM_VALUE2( USE_USER_DEFINED_FORMAT, 1 );
+        ADD_ENUM_VALUE2( USE_ARB_COMPRESSION, 2 );
+        ADD_ENUM_VALUE2( USE_S3TC_DXT1_COMPRESSION, 3 );
+        ADD_ENUM_VALUE2( USE_S3TC_DXT3_COMPRESSION, 4 );
+        ADD_ENUM_VALUE2( USE_S3TC_DXT5_COMPRESSION, 5 );
+        ADD_ENUM_VALUE2( USE_PVRTC_2BPP_COMPRESSION, 6 );
+        ADD_ENUM_VALUE2( USE_PVRTC_4BPP_COMPRESSION, 7 );
+        ADD_ENUM_VALUE2( USE_ETC_COMPRESSION, 8 );
+        ADD_ENUM_VALUE2( USE_RGTC1_COMPRESSION, 10 );
+        ADD_ENUM_VALUE2( USE_RGTC2_COMPRESSION, 11 );
+        ADD_ENUM_VALUE2( USE_S3TC_DXT1c_COMPRESSION, 12 );
+        ADD_ENUM_VALUE2( USE_S3TC_DXT1a_COMPRESSION, 13 );
     END_ENUM_SERIALIZER();  // _internalFormatMode
 
     ADD_USER_SERIALIZER( InternalFormat );  // _internalFormat
+    ADD_USER_WRITER( InternalFormat );
     ADD_USER_SERIALIZER( SourceFormat );  // _sourceFormat
+    ADD_USER_WRITER( SourceFormat );
     ADD_USER_SERIALIZER( SourceType );  // _sourceType
+    ADD_USER_WRITER( SourceType );
     ADD_BOOL_SERIALIZER( ShadowComparison, false );  // _use_shadow_comparison
 
     BEGIN_ENUM_SERIALIZER( ShadowCompareFunc, LEQUAL );
-        ADD_ENUM_VALUE( NEVER );
-        ADD_ENUM_VALUE( LESS );
-        ADD_ENUM_VALUE( EQUAL );
-        ADD_ENUM_VALUE( LEQUAL );
-        ADD_ENUM_VALUE( GREATER );
-        ADD_ENUM_VALUE( NOTEQUAL );
-        ADD_ENUM_VALUE( GEQUAL );
-        ADD_ENUM_VALUE( ALWAYS );
+        ADD_ENUM_VALUE2( NEVER, 0x0200 );
+        ADD_ENUM_VALUE2( LESS, 0x0201 );
+        ADD_ENUM_VALUE2( EQUAL, 0x0202 );
+        ADD_ENUM_VALUE2( LEQUAL, 0x0203 );
+        ADD_ENUM_VALUE2( GREATER, 0x0204 );
+        ADD_ENUM_VALUE2( NOTEQUAL, 0x0205 );
+        ADD_ENUM_VALUE2( GEQUAL, 0x0206 );
+        ADD_ENUM_VALUE2( ALWAYS, 0x0207 );
     END_ENUM_SERIALIZER();  // _shadow_compare_func
 
     BEGIN_ENUM_SERIALIZER( ShadowTextureMode, LUMINANCE );
-        ADD_ENUM_VALUE( LUMINANCE );
-        ADD_ENUM_VALUE( INTENSITY );
-        ADD_ENUM_VALUE( ALPHA );
-        ADD_ENUM_VALUE( NONE );
+        ADD_ENUM_VALUE2( LUMINANCE, 0x1909 );
+        ADD_ENUM_VALUE2( INTENSITY, 0x8049 );
+        ADD_ENUM_VALUE2( ALPHA, 0x1906 );
+        ADD_ENUM_VALUE2( NONE, 0 );
     END_ENUM_SERIALIZER();  // _shadow_texture_mode
 
     ADD_FLOAT_SERIALIZER( ShadowAmbient, 0.0f );  // _shadow_ambient
@@ -212,6 +288,7 @@ REGISTER_OBJECT_WRAPPER( Texture,
     {
         UPDATE_TO_VERSION_SCOPED( 95 )
         ADD_USER_SERIALIZER( ImageAttachment );  // _imageAttachment
+        ADD_USER_WRITER( ImageAttachment );
     }
     {
         UPDATE_TO_VERSION_SCOPED( 154 )
@@ -220,6 +297,7 @@ REGISTER_OBJECT_WRAPPER( Texture,
     {
         UPDATE_TO_VERSION_SCOPED( 98 )
         ADD_USER_SERIALIZER( Swizzle );  // _swizzle
+        ADD_USER_WRITER( Swizzle );
     }
     {
         UPDATE_TO_VERSION_SCOPED( 155 )

@@ -15,6 +15,24 @@ enum osg_TextureCubeMap_Face {
             is >> is.END_BRACKET; \
         } \
         return true; \
+    } \
+    static const IRCommand* find##PROP(OutputUserData& ud) \
+    { return ud.findCommand("setImage" #FACE); } \
+    static bool has##PROP(OutputUserData& ud) { \
+        const IRCommand* cmd = find##PROP(ud); \
+        return cmd && !cmd->args.empty() && ud.resolve(cmd->args[0]) >= 0; \
+    } \
+    static bool write##PROP(OutputStream& os, OutputUserData& ud) { \
+        const IRCommand* cmd = find##PROP(ud); \
+        int target = (cmd && !cmd->args.empty()) ? ud.resolve(cmd->args[0]) : -1; \
+        os << (target >= 0); \
+        if (target >= 0) { \
+            os << os.BEGIN_BRACKET << std::endl; \
+            os.writeImage(ud, target); \
+            os << os.END_BRACKET << std::endl; \
+        } \
+        else if (!os.isBinary()) os << std::endl; \
+        return true; \
     }
 
 FACE_IMAGE_FUNCTION( PosX, osg_TextureCubeMap_Face::POSITIVE_X )
@@ -30,11 +48,17 @@ REGISTER_OBJECT_WRAPPER( TextureCubeMap,
                          "osg::Object osg::StateAttribute osg::Texture osg::TextureCubeMap" )
 {
     ADD_USER_SERIALIZER( PosX );
+    ADD_USER_WRITER_IF( PosX, hasPosX );
     ADD_USER_SERIALIZER( NegX );
+    ADD_USER_WRITER_IF( NegX, hasNegX );
     ADD_USER_SERIALIZER( PosY );
+    ADD_USER_WRITER_IF( PosY, hasPosY );
     ADD_USER_SERIALIZER( NegY );
+    ADD_USER_WRITER_IF( NegY, hasNegY );
     ADD_USER_SERIALIZER( PosZ );
+    ADD_USER_WRITER_IF( PosZ, hasPosZ );
     ADD_USER_SERIALIZER( NegZ );  // _images
+    ADD_USER_WRITER_IF( NegZ, hasNegZ );
 
     ADD_INT_SERIALIZER( TextureWidth, 0 );  // _textureWidth
     ADD_INT_SERIALIZER( TextureHeight, 0 );  // _textureHeight

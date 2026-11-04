@@ -82,3 +82,95 @@ bool readParticle( InputStream& is, InputUserData& ud )
     is >> is.END_BRACKET;
     return true;
 }
+
+// Writes one osgParticle::Particle block from the "setParticle" command.
+bool writeParticle( OutputStream& os, OutputUserData& ud )
+{
+    const IRCommand* cmd = ud.findCommand("setParticle");
+    const std::vector<IRArg>* a = cmd ? &cmd->args : NULL;
+    const IRArg none;
+    #define PARTICLE_ARG(I) ((a && a->size() > (I)) ? (*a)[I] : none)
+
+    os << os.BEGIN_BRACKET << std::endl;
+
+    int shape = (int)irArgInt(PARTICLE_ARG(0));
+    if (os.isBinary()) os << shape;
+    else
+    {
+        const std::string& token = UserLookupTableProxy::get("Shape").value(shape);
+        os << os.PROPERTY("Shape")
+           << (token.empty() ? std::to_string(shape) : token) << std::endl;
+    }
+
+    if (!os.isBinary()) os << os.PROPERTY("LifeTime");
+    os << irArgDouble(PARTICLE_ARG(1));
+    if (!os.isBinary()) os << std::endl;
+
+    if (!os.isBinary()) os << os.PROPERTY("SizeRange");
+    os << (float)irArgDouble(PARTICLE_ARG(2)) << (float)irArgDouble(PARTICLE_ARG(3));
+    if (!os.isBinary()) os << std::endl;
+
+    if (!os.isBinary()) os << os.PROPERTY("AlphaRange");
+    os << (float)irArgDouble(PARTICLE_ARG(4)) << (float)irArgDouble(PARTICLE_ARG(5));
+    if (!os.isBinary()) os << std::endl;
+
+    if (!os.isBinary()) os << os.PROPERTY("ColorRange");
+    os << irArgVec4d(PARTICLE_ARG(6)) << irArgVec4d(PARTICLE_ARG(7));
+    if (!os.isBinary()) os << std::endl;
+
+    const char* interpolators[3] = { "SizeInterpolator", "AlphaInterpolator", "ColorInterpolator" };
+    for (int i = 0; i < 3; ++i)
+    {
+        int target = ud.resolve(PARTICLE_ARG(17 + i));
+        if (!os.isBinary()) os << os.PROPERTY(interpolators[i]);
+        os << (target >= 0);
+        if (target >= 0)
+        {
+            os << os.BEGIN_BRACKET << std::endl;
+            if (os.isBinary()) os << true;   // readObjectFromStream's own flag
+            os.writeObject(ud, target);
+            os << os.END_BRACKET << std::endl;
+        }
+        else if (!os.isBinary()) os << std::endl;
+    }
+
+    if (!os.isBinary()) os << os.PROPERTY("Radius");
+    os << (float)irArgDouble(PARTICLE_ARG(8));
+    if (!os.isBinary()) os << std::endl;
+
+    if (!os.isBinary()) os << os.PROPERTY("Mass");
+    os << (float)irArgDouble(PARTICLE_ARG(9));
+    if (!os.isBinary()) os << std::endl;
+
+    if (!os.isBinary()) os << os.PROPERTY("Position");
+    os << irArgVec3d(PARTICLE_ARG(10));
+    if (!os.isBinary()) os << std::endl;
+
+    if (!os.isBinary()) os << os.PROPERTY("Velocity");
+    os << irArgVec3d(PARTICLE_ARG(11));
+    if (!os.isBinary()) os << std::endl;
+
+    if (!os.isBinary()) os << os.PROPERTY("Angle");
+    os << irArgVec3d(PARTICLE_ARG(12));
+    if (!os.isBinary()) os << std::endl;
+
+    if (!os.isBinary()) os << os.PROPERTY("AngularVelocity");
+    os << irArgVec3d(PARTICLE_ARG(13));
+    if (!os.isBinary()) os << std::endl;
+
+    if (!os.isBinary()) os << os.PROPERTY("TextureTile");
+    os << (int)irArgInt(PARTICLE_ARG(14)) << (int)irArgInt(PARTICLE_ARG(15))
+       << (int)irArgInt(PARTICLE_ARG(16));
+    if (!os.isBinary()) os << std::endl;
+
+    if (os.getFileVersion() < 145)
+    {
+        if (!os.isBinary()) os << os.PROPERTY("Drawable");
+        os << false;
+        if (!os.isBinary()) os << std::endl;
+    }
+
+    os << os.END_BRACKET << std::endl;
+    #undef PARTICLE_ARG
+    return true;
+}

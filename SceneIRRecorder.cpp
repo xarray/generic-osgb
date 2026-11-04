@@ -32,6 +32,13 @@ namespace
         {
             if (current() >= 0) _ir.emitCommand(current(), name, args);
         }
+        void commandOn(const ObjectTypeAndID& target, const std::string& name,
+                       const std::vector<IRArg>& args) override
+        {
+            int index = _ir.resolve(target._type, target._id);
+            if (index < 0) index = current();
+            if (index >= 0) _ir.emitCommand(index, name, args);
+        }
 
         // ---- serializer callbacks ----
         void apply(BoolSerializer& s) override { emitProp(IRArg::makeBool(s._v0)); }

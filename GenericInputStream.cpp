@@ -27,6 +27,32 @@ namespace
         { std::swap(ptr[i], ptr[size - 1 - i]); }
     }
 
+    // Decode the base64 payload of an ASCII inline image.
+    inline void g_decodeBase64(const std::string& src, std::vector<unsigned char>& out)
+    {
+        int value = 0, bits = -8;
+        for (size_t i = 0; i < src.size(); ++i)
+        {
+            char c = src[i];
+            int d = -1;
+            if (c >= 'A' && c <= 'Z') d = c - 'A';
+            else if (c >= 'a' && c <= 'z') d = c - 'a' + 26;
+            else if (c >= '0' && c <= '9') d = c - '0' + 52;
+            else if (c == '+') d = 62;
+            else if (c == '/') d = 63;
+            else if (c == '=') break;
+            else continue;
+
+            value = (value << 6) | d;
+            bits += 6;
+            if (bits >= 0)
+            {
+                out.push_back((unsigned char)((value >> bits) & 0xFF));
+                bits -= 8;
+            }
+        }
+    }
+
     // Map the compact ArrayType id to the osg class name / component count so a
     // visitor or the IR can rebuild the array (legacy files carry no class name).
     inline const char* g_osgArrayClass(unsigned int t)
@@ -321,6 +347,46 @@ namespace
         gl.add("GL_MODELVIEW", GL_MODELVIEW);
         gl.add("GL_VIEWPORT", GL_VIEWPORT);
 
+        // Comparison functions and tex-env tokens that ASCII assets use (osg's
+        // lookup table stores most GL names without the "GL_" prefix).
+        gl.add("NEVER", GL_NEVER);
+        gl.add("LESS", GL_LESS);
+        gl.add("EQUAL", GL_EQUAL);
+        gl.add("LEQUAL", GL_LEQUAL);
+        gl.add("GREATER", GL_GREATER);
+        gl.add("NOTEQUAL", GL_NOTEQUAL);
+        gl.add("GEQUAL", GL_GEQUAL);
+        gl.add("ALWAYS", GL_ALWAYS);
+        gl.add("ADD", 0x0104);
+        gl.add("ADD_SIGNED", 0x8574);
+        gl.add("INTERPOLATE", 0x8575);
+        gl.add("SUBTRACT", 0x84E6);
+        gl.add("DOT3_RGB", 0x86AE);
+        gl.add("DOT3_RGBA", 0x86AF);
+        gl.add("COMBINE", 0x8570);
+        gl.add("COMBINE_RGB", 0x8571);
+        gl.add("COMBINE_ALPHA", 0x8572);
+        gl.add("RGB_SCALE", 0x8573);
+        gl.add("ALPHA_SCALE", 0x0D1C);
+        gl.add("SOURCE0_RGB", 0x8580);
+        gl.add("SOURCE1_RGB", 0x8581);
+        gl.add("SOURCE2_RGB", 0x8582);
+        gl.add("SOURCE0_ALPHA", 0x8588);
+        gl.add("SOURCE1_ALPHA", 0x8589);
+        gl.add("SOURCE2_ALPHA", 0x858A);
+        gl.add("OPERAND0_RGB", 0x8590);
+        gl.add("OPERAND1_RGB", 0x8591);
+        gl.add("OPERAND2_RGB", 0x8592);
+        gl.add("OPERAND0_ALPHA", 0x8598);
+        gl.add("OPERAND1_ALPHA", 0x8599);
+        gl.add("OPERAND2_ALPHA", 0x859A);
+        gl.add("TEXTURE", 0x1702);
+        gl.add("CONSTANT", 0x8576);
+        gl.add("PRIMARY_COLOR", 0x8577);
+        gl.add("PREVIOUS", 0x8578);
+        gl.add("CLAMP_TO_BORDER", 0x812D);
+        gl.add("MIRROR", 0x8370);
+
         return tables;
     }
 }
@@ -544,7 +610,19 @@ void AsciiInputIterator::readGLenum(ObjectGLenum& value)
     unsigned int e = 0;
     std::string enumString;
     readString(enumString);
-    e = UserLookupTableProxy::get("GL").value(enumString);
+
+    IntLookup& table = UserLookupTableProxy::get("GL");
+    if (table.hasName(enumString)) e = (unsigned int)table.value(enumString);
+    else if (table.hasName("GL_" + enumString))
+        e = (unsigned int)table.value("GL_" + enumString);
+    else
+    {
+        // Flat/numeric form (e.g. a GLenum whose name is not in the built-in
+        // table, written by the generic writer or by a foreign tool).
+        char* end = NULL;
+        unsigned long v = strtoul(enumString.c_str(), &end, 0);
+        if (end && *end == '\0') e = (unsigned int)v;
+    }
     value.set(e);
     value.setType("GL");
 }
@@ -1532,6 +1610,7 @@ ObjectTypeAndID InputStream::readImage(InputUserData& ud)
             {
                 std::string base64Data;
                 readWrappedString(base64Data);
+                if (i == 0) g_decodeBase64(base64Data, pixels);
                 if (getException()) { if (record) ud.notifyEndObject(); return ObjectTypeAndID(); }
             }
             *this >> END_BRACKET;
@@ -1794,15 +1873,16 @@ void InputUserData::emitCommand(const ObjectTypeAndID& parent, const char* name,
                                 const std::vector<IRArg>& args)
 {
     // Explicit-target commands (e.g. an Array's setBinding) are recorded against
-    // the addressed object in the IR. They are not forwarded to the visitor,
-    // which only tracks the current object scope (v>=112 files carry array
-    // binding/normalize through the Array object's own serializers instead).
+    // the addressed object in the IR.  The visitor receives them too so a
+    // visitor-owned IR (the default SceneIRRecorder) can resolve the target;
+    // without a visitor they were historically dropped.
     if (_ir)
     {
         int target = _ir->resolve(parent._type, parent._id);
         if (target < 0) target = currentIR();
         _ir->emitCommand(target, name ? name : "", args);
     }
+    if (_visitor) _visitor->commandOn(parent, name ? name : "", args);
 }
 
 ObjectTypeAndID InputUserData::readObjectFromStream(InputStream& is, const std::string& type)
@@ -1836,11 +1916,11 @@ ObjectTypeAndID InputUserData::readObjectFromStream(InputStream& is, const std::
         return oid;
     }
 
-    // ASCII: the property name has already been consumed by matchString. Arrays
-    // and primitive sets are self-delimiting (they read their own ArrayID/size
-    // braces); other objects are a plain className + fields, with any wrapping
-    // braces / has-object flag handled by the caller (user serializer or
-    // ObjectSerializer). This keeps both call conventions consistent.
+    // ASCII: since osg 112 arrays and primitive sets are written as full
+    // objects (OutputStream::operator<< dispatches on the target version, not on
+    // the file type), so modern .osgt files carry className + UniqueID + fields.
+    // Older files keep the compact ArrayID/type forms.
+    if (is.getFileVersion() >= 112) return is.readObject(*this);
     if (type == "osg::Array") return is.readArray(*this);
     if (type == "osg::PrimitiveSet") return is.readPrimitiveSet(*this);
     return is.readObject(*this);

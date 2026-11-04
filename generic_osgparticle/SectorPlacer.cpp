@@ -5,6 +5,13 @@ using namespace osgVerse;
     static bool read##PROP( InputStream& is, InputUserData& ud ) { \
         float min = 0.0f, max = 0.0f; is >> min >> max; \
         ud.add( "set" #PROP, min, max ); return true; \
+    } \
+    static bool write##PROP( OutputStream& os, OutputUserData& ud ) { \
+        const IRCommand* cmd = ud.findCommand("set" #PROP); \
+        float min = 0.0f, max = 0.0f; \
+        if (cmd && cmd->args.size() > 1) { \
+            min = (float)irArgDouble(cmd->args[0]); max = (float)irArgDouble(cmd->args[1]); } \
+        os << min << max << std::endl; return true; \
     }
 
 SECTORPLACER_FUNCTION( RadiusRange )
@@ -16,5 +23,7 @@ REGISTER_OBJECT_WRAPPER( osgParticleSectorPlacer,
                          "osg::Object osgParticle::Placer osgParticle::CenteredPlacer osgParticle::SectorPlacer" )
 {
     ADD_USER_SERIALIZER( RadiusRange );  // _rad_range
+    ADD_USER_WRITER( RadiusRange );
     ADD_USER_SERIALIZER( PhiRange );  // _phi_range
+    ADD_USER_WRITER( PhiRange );
 }

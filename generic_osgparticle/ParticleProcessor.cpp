@@ -7,8 +7,8 @@ REGISTER_OBJECT_WRAPPER( osgParticleParticleProcessor,
                          "osg::Object osg::Node osgParticle::ParticleProcessor" )
 {
     BEGIN_ENUM_SERIALIZER( ReferenceFrame, RELATIVE_RF );
-        ADD_ENUM_VALUE( RELATIVE_RF );
-        ADD_ENUM_VALUE( ABSOLUTE_RF );
+        ADD_ENUM_VALUE2( RELATIVE_RF, 0 );
+        ADD_ENUM_VALUE2( ABSOLUTE_RF, 1 );
     END_ENUM_SERIALIZER();  // _rf
 
     ADD_BOOL_SERIALIZER( Enabled, true );  // _enabled

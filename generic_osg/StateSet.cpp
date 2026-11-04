@@ -170,24 +170,205 @@ static bool readDefineList(InputStream& is, InputUserData& ud)
     return true;
 }
 
+static bool writeValue(OutputStream& os, int value)
+{
+    if (os.isBinary()) { os << value; return true; }
+
+    std::string s;
+    if ((value & osg_StateAttribute::ON) != 0) s += "ON";
+    if ((value & osg_StateAttribute::OVERRIDE) != 0) { if (!s.empty()) s += '|'; s += "OVERRIDE"; }
+    if ((value & osg_StateAttribute::PROTECTED) != 0) { if (!s.empty()) s += '|'; s += "PROTECTED"; }
+    if ((value & osg_StateAttribute::INHERIT) != 0) { if (!s.empty()) s += '|'; s += "INHERIT"; }
+    if (s.empty()) s = "OFF";
+    os << s;
+    return true;
+}
+
+typedef std::pair<unsigned int, int> ModeEntry;
+typedef std::pair<int, int> AttributeEntry;
+
+static bool writeModes(OutputStream& os, const std::vector<ModeEntry>& modes)
+{
+    os << (unsigned int)modes.size();
+    if (!modes.empty())
+    {
+        os << os.BEGIN_BRACKET << std::endl;
+        for (size_t i = 0; i < modes.size(); ++i)
+        {
+            os << ObjectGLenum(modes[i].first, "GL");
+            writeValue(os, modes[i].second);
+            os << std::endl;
+        }
+        os << os.END_BRACKET;
+    }
+    os << std::endl;
+    return true;
+}
+
+static bool writeAttributes(OutputStream& os, OutputUserData& ud,
+                            const std::vector<AttributeEntry>& attrs)
+{
+    os << (unsigned int)attrs.size();
+    if (!attrs.empty())
+    {
+        os << os.BEGIN_BRACKET << std::endl;
+        for (size_t i = 0; i < attrs.size(); ++i)
+        {
+            os.writeObject(ud, attrs[i].first);
+            os << os.PROPERTY("Value");
+            writeValue(os, attrs[i].second);
+            os << std::endl;
+        }
+        os << os.END_BRACKET;
+    }
+    os << std::endl;
+    return true;
+}
+
+static bool writeModeList(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> cmds;
+    ud.findCommands("setMode", cmds);
+    std::vector<ModeEntry> modes;
+    for (size_t i = 0; i < cmds.size(); ++i)
+    {
+        const IRCommand& c = *cmds[i];
+        if (c.args.size() < 2) continue;
+        modes.push_back(ModeEntry((unsigned int)irArgInt(c.args[0]),
+                                  (int)irArgInt(c.args[1])));
+    }
+    return writeModes(os, modes);
+}
+
+static bool writeAttributeList(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> cmds;
+    ud.findCommands("setAttribute", cmds);
+    std::vector<AttributeEntry> attrs;
+    for (size_t i = 0; i < cmds.size(); ++i)
+    {
+        const IRCommand& c = *cmds[i];
+        if (c.args.size() < 2) continue;
+        attrs.push_back(AttributeEntry(ud.resolve(c.args[0]), (int)irArgInt(c.args[1])));
+    }
+    return writeAttributes(os, ud, attrs);
+}
+
+static bool writeTextureModeList(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> cmds;
+    ud.findCommands("setTextureMode", cmds);
+
+    std::map<unsigned int, std::vector<ModeEntry> > groups;
+    for (size_t i = 0; i < cmds.size(); ++i)
+    {
+        const IRCommand& c = *cmds[i];
+        if (c.args.size() < 3) continue;
+        groups[(unsigned int)irArgInt(c.args[0])].push_back(
+            ModeEntry((unsigned int)irArgInt(c.args[1]), (int)irArgInt(c.args[2])));
+    }
+
+    unsigned int count = groups.empty() ? 0 : (groups.rbegin()->first + 1);
+    os << count << os.BEGIN_BRACKET << std::endl;
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        os << os.PROPERTY("Data");
+        std::map<unsigned int, std::vector<ModeEntry> >::iterator itr = groups.find(i);
+        static const std::vector<ModeEntry> s_empty;
+        writeModes(os, itr != groups.end() ? itr->second : s_empty);
+    }
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
+static bool writeTextureAttributeList(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> cmds;
+    ud.findCommands("setTextureAttribute", cmds);
+
+    std::map<unsigned int, std::vector<AttributeEntry> > groups;
+    for (size_t i = 0; i < cmds.size(); ++i)
+    {
+        const IRCommand& c = *cmds[i];
+        if (c.args.size() < 3) continue;
+        groups[(unsigned int)irArgInt(c.args[0])].push_back(
+            AttributeEntry(ud.resolve(c.args[1]), (int)irArgInt(c.args[2])));
+    }
+
+    unsigned int count = groups.empty() ? 0 : (groups.rbegin()->first + 1);
+    os << count << os.BEGIN_BRACKET << std::endl;
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        os << os.PROPERTY("Data");
+        std::map<unsigned int, std::vector<AttributeEntry> >::iterator itr = groups.find(i);
+        static const std::vector<AttributeEntry> s_empty;
+        writeAttributes(os, ud, itr != groups.end() ? itr->second : s_empty);
+    }
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
+static bool writeUniformList(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> cmds;
+    ud.findCommands("addUniform", cmds);
+
+    os << (unsigned int)cmds.size() << os.BEGIN_BRACKET << std::endl;
+    for (size_t i = 0; i < cmds.size(); ++i)
+    {
+        const IRCommand& c = *cmds[i];
+        if (c.args.empty()) continue;
+        os.writeObject(ud, ud.resolve(c.args[0]));
+        os << os.PROPERTY("Value");
+        writeValue(os, c.args.size() > 1 ? (int)irArgInt(c.args[1]) : 0);
+        os << std::endl;
+    }
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
+static bool writeDefineList(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> cmds;
+    ud.findCommands("setDefine", cmds);
+
+    os << (unsigned int)cmds.size() << os.BEGIN_BRACKET << std::endl;
+    for (size_t i = 0; i < cmds.size(); ++i)
+    {
+        const IRCommand& c = *cmds[i];
+        os.writeWrappedString(c.args.size() > 0 ? irArgString(c.args[0]) : std::string());
+        os.writeWrappedString(c.args.size() > 1 ? irArgString(c.args[1]) : std::string());
+        os << os.PROPERTY("Value");
+        writeValue(os, c.args.size() > 2 ? (int)irArgInt(c.args[2]) : 0);
+        os << std::endl;
+    }
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( StateSet,
                          new osg::StateSet,
                          osg::StateSet,
                          "osg::Object osg::StateSet" )
 {
     ADD_USER_SERIALIZER( ModeList );  // _modeList
+    ADD_USER_WRITER( ModeList );
     ADD_USER_SERIALIZER( AttributeList );  // _attributeList
+    ADD_USER_WRITER( AttributeList );
     ADD_USER_SERIALIZER( TextureModeList );  // _textureModeList
+    ADD_USER_WRITER( TextureModeList );
     ADD_USER_SERIALIZER( TextureAttributeList );  // _textureAttributeList
+    ADD_USER_WRITER( TextureAttributeList );
     ADD_USER_SERIALIZER( UniformList );  // _uniformList
+    ADD_USER_WRITER( UniformList );
     ADD_INT_SERIALIZER( RenderingHint, osg::StateSet::DEFAULT_BIN );  // _renderingHint
 
     BEGIN_ENUM_SERIALIZER( RenderBinMode, INHERIT_RENDERBIN_DETAILS );
-        ADD_ENUM_VALUE( INHERIT_RENDERBIN_DETAILS );
-        ADD_ENUM_VALUE( USE_RENDERBIN_DETAILS );
-        ADD_ENUM_VALUE( OVERRIDE_RENDERBIN_DETAILS );
-        ADD_ENUM_VALUE( PROTECTED_RENDERBIN_DETAILS );
-        ADD_ENUM_VALUE( OVERRIDE_PROTECTED_RENDERBIN_DETAILS );
+        ADD_ENUM_VALUE2( INHERIT_RENDERBIN_DETAILS, 0 );
+        ADD_ENUM_VALUE2( USE_RENDERBIN_DETAILS, 1 );
+        ADD_ENUM_VALUE2( OVERRIDE_RENDERBIN_DETAILS, 2 );
+        ADD_ENUM_VALUE2( PROTECTED_RENDERBIN_DETAILS, 4 );
+        ADD_ENUM_VALUE2( OVERRIDE_PROTECTED_RENDERBIN_DETAILS, 6 );
     END_ENUM_SERIALIZER();  // _binMode
 
     ADD_INT_SERIALIZER( BinNumber, 0 );  // _binNum
@@ -199,5 +380,6 @@ REGISTER_OBJECT_WRAPPER( StateSet,
     {
         UPDATE_TO_VERSION_SCOPED( 151 )
         ADD_USER_SERIALIZER( DefineList );  // _defineList
+        ADD_USER_WRITER( DefineList );
     }
 }

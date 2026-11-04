@@ -12,6 +12,25 @@ static bool readInitialBound(InputStream& is, InputUserData& ud)
     return true;
 }
 
+// _initialBound
+static bool hasInitialBound(OutputUserData& ud)
+{ return ud.findPropertyArgOfKind("InitialBound", IRArg::BBOX) != NULL; }
+
+static bool writeInitialBound(OutputStream& os, OutputUserData& ud)
+{
+    const IRArg* a = ud.findPropertyArgOfKind("InitialBound", IRArg::BBOX);
+    osg::BoundingBoxd bb;
+    if (a) bb = irArgBoundingBox(*a);
+
+    os << os.BEGIN_BRACKET << std::endl;
+    os << os.PROPERTY("Minimum") << osg::Vec3d(bb._min._v[0], bb._min._v[1], bb._min._v[2])
+       << std::endl;
+    os << os.PROPERTY("Maximum") << osg::Vec3d(bb._max._v[0], bb._max._v[1], bb._max._v[2])
+       << std::endl;
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( Drawable,
                          /*new osg::Drawable*/NULL,
                          osg::Drawable,
@@ -24,6 +43,7 @@ REGISTER_OBJECT_WRAPPER( Drawable,
 
     ADD_OBJECT_SERIALIZER( StateSet, osg::StateSet, NULL );  // _stateset
     ADD_USER_SERIALIZER( InitialBound );  // _initialBound
+    ADD_USER_WRITER_IF( InitialBound, &hasInitialBound );
     ADD_OBJECT_SERIALIZER( ComputeBoundingBoxCallback,
                            osg::Drawable::ComputeBoundingBoxCallback, NULL );  // _computeBoundCallback
     ADD_OBJECT_SERIALIZER( Shape, osg::Shape, NULL );  // _shape

@@ -14,6 +14,7 @@
 #include <cfloat>
 #include "GenericMath.h"
 #include "GenericInputStream.h"
+#include "GenericOutputStream.h"
 #include "SceneIR.h"
 
 extern "C"
@@ -76,6 +77,14 @@ namespace osgVerse
         virtual void endObject() {}
         virtual void command(const std::string& name, const std::vector<IRArg>& args) {}
 
+        // A command addressed to a specific object rather than the object being
+        // read (e.g. an Array's "setBinding" emitted while reading Geometry).
+        // The default keeps the previous behaviour of dropping the target and
+        // applying the command to the current object.
+        virtual void commandOn(const ObjectTypeAndID& target, const std::string& name,
+                               const std::vector<IRArg>& args)
+        { (void)target; command(name, args); }
+
         // Data-bearing objects that the legacy/compact readers (readArray /
         // readPrimitiveSet / readImage) do not expose through the serializer
         // channel. Each is preceded by beginObject(className, id) and followed
@@ -110,12 +119,22 @@ namespace osgVerse
     // Type-dispatched read: fills the serializer's value from an InputStream.
     // Returns false if the serializer type is not handled.
     bool readSerializerValue(InputStream& is, InputUserData& ud, BaseSerializer& s);
+
+    // Type-dispatched write: emits the serializer's value to an OutputStream.
+    // The value is taken from the IR command named `property` on the current
+    // object, with the serializer's default (`_v0`) as fallback.
+    bool writeSerializerValue(OutputStream& os, OutputUserData& ud,
+                              const std::string& property, BaseSerializer& s);
 #define META_VISITOR() virtual void accept(const std::string& n, SerializerVisitor& v) \
                        { v.push(n); v.apply(*this); v.pop(); }
 
     struct BaseSerializer : public osg::Referenced
     {
         typedef std::function<void(InputStream& is, InputUserData& ud)> ReadFunc;
+        typedef std::function<bool(OutputStream& os, OutputUserData& ud)> WriteFunc;
+        // Optional predicate: when it returns false the property is omitted (as
+        // osg's check functions do for unset values).
+        typedef std::function<bool(OutputUserData& ud)> CheckFunc;
         BaseSerializer() : _firstVersion(0), _lastVersion(INT_MAX) {}
         int _firstVersion, _lastVersion; META_VISITOR()
     };
@@ -133,19 +152,29 @@ namespace osgVerse
     { ObjectTypeAndID _readValue; META_VISITOR() };
     struct VectorSerializer : public BaseSerializer
     { std::string _type; int _numComponents; std::vector<double> _values; META_VISITOR() };
-    struct UserSerializer : public BaseSerializer { ReadFunc _reader; META_VISITOR() };
-    struct BoolSerializer : public BaseSerializer { bool _v0; META_VISITOR() };
-    struct StringSerializer : public BaseSerializer { std::string _v0; META_VISITOR() };
-    struct GLenumSerializer : public BaseSerializer { std::string _type; unsigned int _v0; META_VISITOR() };
-    template<typename T> struct ValueSerializer : public BaseSerializer { T _v0; bool _hex; META_VISITOR() };
+    struct UserSerializer : public BaseSerializer
+    { ReadFunc _reader; WriteFunc _writer; CheckFunc _checker; META_VISITOR() };
+    // Note: `_v0` is read scratch (it holds whatever the last read produced),
+    // while `_default` is the immutable registration-time default used when
+    // writing an IR that has no value for the property.
+    struct BoolSerializer : public BaseSerializer
+    { bool _v0; bool _default; META_VISITOR() };
+    struct StringSerializer : public BaseSerializer
+    { std::string _v0; std::string _default; META_VISITOR() };
+    struct GLenumSerializer : public BaseSerializer
+    { std::string _type; unsigned int _v0; unsigned int _default; META_VISITOR() };
+    template<typename T> struct ValueSerializer : public BaseSerializer
+    { T _v0; T _default; bool _hex; META_VISITOR() };
     template<typename T> struct ListSerializer : public BaseSerializer
     { T _v0; std::string _elemType; std::vector<T> _elements; META_VISITOR() };
 
     struct EnumSerializer : public BaseSerializer
-    { std::string _v0; std::set<std::string> _values; META_VISITOR() };
+    { std::string _v0; std::string _default;
+      std::set<std::string> _values; std::map<std::string, int> _valueMap; META_VISITOR() };
 
     struct BitFlagSerializer : public BaseSerializer
-    { bool _asInt; unsigned int _v0; std::map<std::string, unsigned int> _valueMap; META_VISITOR() };
+    { bool _asInt; unsigned int _v0; unsigned int _default;
+      std::map<std::string, unsigned int> _valueMap; META_VISITOR() };
 
     template<typename T> void SerializerVisitor::apply(ValueSerializer<T>& obj)
     { applyValue(static_cast<BaseSerializer&>(obj)); }
@@ -154,10 +183,10 @@ namespace osgVerse
     {
     public:
         template<typename T> void addValueSerializer(const std::string& prop, T def, bool hex = false)
-        { ValueSerializer<T>* s = new ValueSerializer<T>(); s->_v0 = def; s->_hex = hex; add(prop, s); }
+        { ValueSerializer<T>* s = new ValueSerializer<T>(); s->_v0 = def; s->_default = def; s->_hex = hex; add(prop, s); }
 
         template<typename T> void addRefValueSerializer(const std::string& prop, const T& def, bool hex = false)
-        { ValueSerializer<T>* s = new ValueSerializer<T>(); s->_v0 = def; s->_hex = hex; add(prop, s); }
+        { ValueSerializer<T>* s = new ValueSerializer<T>(); s->_v0 = def; s->_default = def; s->_hex = hex; add(prop, s); }
 
         template<typename T> void addListSerializer(const std::string& prop)
         { ListSerializer<T>* s = new ListSerializer<T>(); add(prop, s); }
@@ -171,13 +200,13 @@ namespace osgVerse
         }
 
         void addBoolSerializer(const std::string& prop, bool def)
-        { BoolSerializer* s = new BoolSerializer; s->_v0 = def; add(prop, s); }
+        { BoolSerializer* s = new BoolSerializer; s->_v0 = def; s->_default = def; add(prop, s); }
 
         void addGLenumSerializer(const std::string& prop, const std::string& type, unsigned int def)
-        { GLenumSerializer* s = new GLenumSerializer; s->_type = type; s->_v0 = def; add(prop, s); }
+        { GLenumSerializer* s = new GLenumSerializer; s->_type = type; s->_v0 = def; s->_default = def; add(prop, s); }
 
         void addStringSerializer(const std::string& prop, const std::string& def)
-        { StringSerializer* s = new StringSerializer; s->_v0 = def; add(prop, s); }
+        { StringSerializer* s = new StringSerializer; s->_v0 = def; s->_default = def; add(prop, s); }
 
         void addObjectSerializer(const std::string& prop, const std::string& type)
         { ObjectSerializer* s = new ObjectSerializer; s->_type = type; add(prop, s); }
@@ -191,13 +220,41 @@ namespace osgVerse
         void addUserSerializer(const std::string& prop, BaseSerializer::ReadFunc f)
         { UserSerializer* s = new UserSerializer; s->_reader = f; add(prop, s); }
 
+        // Attach the write counterpart to an existing user serializer (call it
+        // after ADD_USER_SERIALIZER(PROP)).  Wrappers without a writer still
+        // round-trip structurally: binary output writes the "no value" flag and
+        // ASCII output omits the property.
+        void addUserSerializerWriter(const std::string& prop, BaseSerializer::WriteFunc f,
+                                     BaseSerializer::CheckFunc checker = BaseSerializer::CheckFunc())
+        {
+            for (size_t i = 0; i < _serializers.size(); ++i)
+            {
+                if (_serializers[i].first != prop) continue;
+                UserSerializer* s = dynamic_cast<UserSerializer*>(_serializers[i].second.get());
+                if (s) { s->_writer = f; s->_checker = checker; return; }
+            }
+            std::cerr << "[Rewrapper] Writer registered for unknown user property "
+                      << prop << std::endl;
+        }
+
         void beginEnumSerializer(const std::string& prop, const std::string& value)
-        { _lastEnum = new EnumSerializer; _lastEnum->_v0 = value; add(prop, _lastEnum); }
+        { _lastEnum = new EnumSerializer; _lastEnum->_v0 = value; _lastEnum->_default = value; add(prop, _lastEnum); }
         void addEnumValue(const std::string & v) { if (_lastEnum) _lastEnum->_values.insert(v); }
+
+        // Register the numeric value of an enum token so an ASCII-sourced IR can
+        // be written to a binary file.  Use ADD_ENUM_VALUE2(TOKEN, NUMBER) in the
+        // enum block; ADD_ENUM_VALUE stays valid for tokens whose numeric value
+        // is not needed (binary->binary / ASCII->ASCII round-trips).
+        void addEnumValueWithValue(const std::string& v, int value)
+        {
+            if (!_lastEnum) return;
+            _lastEnum->_values.insert(v);
+            _lastEnum->_valueMap[v] = value;
+        }
         void endEnumSerializer() { _lastEnum = NULL; }
 
         void beginBitFlagSerializer(const std::string& prop, unsigned int v, bool i)
-        { _lastBitFlags = new BitFlagSerializer; _lastBitFlags->_asInt = i; _lastBitFlags->_v0 = v; add(prop, _lastBitFlags); }
+        { _lastBitFlags = new BitFlagSerializer; _lastBitFlags->_asInt = i; _lastBitFlags->_v0 = v; _lastBitFlags->_default = v; add(prop, _lastBitFlags); }
         void addBitFlagValue(const std::string& v, unsigned int ui) { if (_lastBitFlags) { _lastBitFlags->_valueMap[v] = ui; } }
         void endBitFlagSerializer() { _lastBitFlags = NULL; }
 
@@ -271,6 +328,15 @@ namespace osgVerse
 }
 
 #define ADD_USER_SERIALIZER(PROP) wrapper.addUserSerializer(#PROP, &read##PROP)
+
+// Optional write counterpart of a user serializer.  Place it right after the
+// matching ADD_USER_SERIALIZER(PROP) line; the writer function has the shape
+//   static bool write##PROP(osgVerse::OutputStream& os, osgVerse::OutputUserData& ud)
+// and writes only the property's content (the name / binary "has value" flag
+// are emitted by writeSerializerValue).
+#define ADD_USER_WRITER(PROP) wrapper.addUserSerializerWriter(#PROP, &write##PROP)
+#define ADD_USER_WRITER_IF(PROP, CHECK) wrapper.addUserSerializerWriter(#PROP, &write##PROP, CHECK)
+#define ADD_USER_SERIALIZER_RW(PROP) ADD_USER_SERIALIZER(PROP); ADD_USER_WRITER(PROP)
 #define ADD_BOOL_SERIALIZER(PROP, DEF) wrapper.addBoolSerializer(#PROP, DEF)
 #define ADD_GLENUM_SERIALIZER(PROP, TYPE, DEF) wrapper.addGLenumSerializer(#PROP, #TYPE, DEF)
 #define ADD_STRING_SERIALIZER(PROP, DEF) wrapper.addStringSerializer(#PROP, DEF)
@@ -333,6 +399,7 @@ namespace osgVerse
 #define BEGIN_ENUM_SERIALIZER(PROP, DEF) wrapper.beginEnumSerializer(#PROP, #DEF);
 #define BEGIN_ENUM_SERIALIZER2(PROP, TYPE, DEF) wrapper.beginEnumSerializer(#PROP, #DEF);
 #define ADD_ENUM_VALUE(VALUE) wrapper.addEnumValue(#VALUE);
+#define ADD_ENUM_VALUE2(VALUE, NUMBER) wrapper.addEnumValueWithValue(#VALUE, NUMBER);
 #define END_ENUM_SERIALIZER() wrapper.endEnumSerializer();
 
 #define BEGIN_BITFLAGS_SERIALIZER(PROP, DEF) wrapper.beginBitFlagSerializer(#PROP, DEF, false);

@@ -18,9 +18,9 @@ REGISTER_OBJECT_WRAPPER( Object,
     ADD_STRING_SERIALIZER( Name, "" );  // _name
 
     BEGIN_ENUM_SERIALIZER( DataVariance, UNSPECIFIED );
-        ADD_ENUM_VALUE( STATIC );
-        ADD_ENUM_VALUE( DYNAMIC );
-        ADD_ENUM_VALUE( UNSPECIFIED );
+        ADD_ENUM_VALUE2( DYNAMIC, 0 );
+        ADD_ENUM_VALUE2( STATIC, 1 );
+        ADD_ENUM_VALUE2( UNSPECIFIED, 2 );
     END_ENUM_SERIALIZER();  // _dataVariance
 
     ADD_USER_SERIALIZER( UserData );  // _userData, deprecated

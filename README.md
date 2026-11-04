@@ -11,11 +11,12 @@ standalone.
 ## Showcase
 
 The same `examples/data/Tile_1/Tile_1.osgb` paged scene, read by the native VSG
-example, the three.js / WebAssembly viewer, and on a Cesium globe:
+example, the three.js / WebAssembly viewer, on a Cesium globe, and in the plain
+OpenGL example:
 
-| VSG (`examples/vsg`) | three.js / WebGL (`examples/threejs`) | CesiumJS globe (`examples/cesium`) |
-|:---:|:---:|:---:|
-| ![VSG screenshot](screenshots/vsg.jpg) | ![three.js screenshot](screenshots/threejs.jpg) | ![Cesium screenshot](screenshots/cesium.jpg) |
+| VSG (`examples/vsg`) | three.js / WebGL (`examples/threejs`) | CesiumJS globe (`examples/cesium`) | OpenGL 3.3 (`examples/opengl`) |
+|:---:|:---:|:---:|:---:|
+| ![VSG screenshot](screenshots/vsg.jpg) | ![three.js screenshot](screenshots/threejs.jpg) | ![Cesium screenshot](screenshots/cesium.jpg) | ![OpenGL screenshot](screenshots/opengl.jpg) |
 
 ---
 
@@ -70,6 +71,13 @@ This project re-implements that mechanism standalone:
   user-serializer `read*` functions. Those commands are forwarded to the optional
   `SerializerVisitor` and/or recorded into a neutral `SceneIR` (see `SceneIR.h`)
   that a host adapter can replay to rebuild the graph in another engine.
+* **Writing** — `GenericOutputStream.h/.cpp` (`OutputIterator` /
+  `OutputStream` / `OutputUserData`) and `GenericWriter.h/.cpp` turn a
+  `SceneIR` back into `.osgt` / `.osgb`. `OutputStream` mirrors osg's writer
+  (brackets, `UniqueID`, version-gated fields); the values come from the IR
+  commands, with the wrapper registration defaults as fallback. Writers for the
+  user serializers are registered per wrapper through `ADD_USER_WRITER` /
+  `ADD_USER_WRITER_IF` (see §2).
 
 Entry point (`GenericReader.h`):
 
@@ -80,11 +88,78 @@ osgVerse::ObjectTypeAndID oid = osgVerse::readObjectFile("model.osgb", ud);
 // oid._type is the top-level class name, e.g. "osg::MatrixTransform"
 ```
 
+Write entry point (`GenericWriter.h`, or the matching `writeSceneIR` in `SceneIR.h`):
+
+```cpp
+osgVerse::SceneIR ir;
+osgVerse::readSceneIR("model.osgb", ir);
+osgVerse::writeObjectFile("model.osgt", ir, true);   // ASCII
+osgVerse::writeObjectFile("model.osgb", ir, false);  // binary (osg version 161)
+```
+
 ### Current format support
 
-* `.osgb` — **uncompressed** binary and `.osgt` — ASCII text.
+* `.osgb` — **uncompressed** binary and `.osgt` — ASCII text (read **and** write).
 * zlib-compressed `.osgb` streams are **not** supported yet
-  (`InputStream::decompress()` rejects any compressor other than `"0"`).
+  (`InputStream::decompress()` rejects any compressor other than `"0"`), and the
+  writer always emits the `"0"` (uncompressed) stream.
+* Written binary files use osg file version **161** by default (arrays and
+  primitive sets as full objects, 64-bit bracket sizes). ASCII output uses the
+  same version; older inputs are normalized to it.
+
+### Writing: how the wrapper write functions work
+
+The write side is driven by the same wrapper layout as reading:
+
+* generic serializers (`ADD_INT_SERIALIZER`, `ADD_OBJECT_SERIALIZER`,
+  `ADD_IMAGE_SERIALIZER`, `ADD_OBJECT_LIST_SERIALIZER`, vector/enum/bit-flag
+  serializers, ...) are handled centrally by `writeSerializerValue()`: the value
+  is looked up in the IR command named after the property (with the legacy
+  `set<Property>` spelling as fallback), otherwise the registration default is
+  written. Binary output always writes every version-active serializer so the
+  positional layout stays valid.
+* user serializers need a write counterpart, placed next to the read function:
+
+  ```cpp
+  static bool writeChildren(osgVerse::OutputStream& os, osgVerse::OutputUserData& ud) { ... }
+
+  REGISTER_OBJECT_WRAPPER( Group, new osg::Group, osg::Group, "osg::Object osg::Node osg::Group" )
+  {
+      ADD_USER_SERIALIZER( Children );              // read
+      ADD_USER_WRITER( Children );                  // write
+      // or, to mirror osg's check() functions (omit unset values):
+      // ADD_USER_WRITER_IF( InitialBound, &hasInitialBound );
+  }
+  ```
+
+  `OutputUserData` exposes the recorded commands (`findCommand`,
+  `findCommands`, `findPropertyArg`, `findPropertyArgOfKind`, `countCommands`)
+  and resolves object references back to IR indices.
+* enum numeric values: binary files store integers, ASCII files store tokens. To
+  convert an ASCII-sourced IR to binary, register the numeric values with
+  `ADD_ENUM_VALUE2(TOKEN, VALUE)` (the plain `ADD_ENUM_VALUE(TOKEN)` is still
+  valid, but leaves no integer mapping; unregistered tokens are written as 0 and
+  reported as a warning).
+
+`reserializing_write_test` validates the writer by reading a file, writing it
+back, reading the result again and writing it a second time; identical bytes
+prove that the target format is stable and nothing is lost:
+
+```bash
+./build/reserializing_write_test input.osgb output.osgt
+# -> prints writer warnings (missing write functions), object/payload
+#    summaries and "Result: OK (objects preserved; output is stable)."
+```
+
+Currently ported write functions cover the common scene path (`osg::Object`,
+`Node`, `Group`, `Geode`, `Drawable`, `Geometry` through the generic serializers,
+`StateSet`, `Material`, `Texture`/`Texture2D`, `LOD`, `PagedLOD`,
+`AnimationPath`, `DefaultUserDataContainer`, and the array/primitive-set
+payloads). Wrappers without a writer still produce a well-formed file (binary
+writes the "no value" flag, ASCII omits the property) and are listed as writer
+warnings, which is the intended way to continue the port wrapper by wrapper.
+Known read-side gaps that affect writing: primitive `ListSerializer` values
+(e.g. `osg::Switch::ValueList`) are not captured in the IR yet.
 
 ---
 
@@ -119,9 +194,11 @@ cmake --build build
 ```
 
 This produces the dependency-free static library `osgVerseGenericReserializer`
-and two executables that depend only on it:
+and three executables that depend only on it:
 
 * `reserializing_test` — parses a file and prints the object scene tree.
+* `reserializing_write_test` — reads, writes and re-reads a file to validate the
+  writer (see §1 for the usage and the "stable round-trip" criterion).
 * `null_integration` — rebuilds the neutral `SceneIR` and prints everything the
   IR describes (object/command histograms, data payloads, full scene tree).
 
@@ -129,6 +206,7 @@ Run them on any `.osgt` / `.osgb` file:
 
 ```bash
 ./build/reserializing_test <file.osgt|file.osgb> [--force-ascii]
+./build/reserializing_write_test <in.osgt|in.osgb> <out.osgt|out.osgb>
 ./build/null_integration  <file.osgt|file.osgb>
 ```
 
@@ -311,7 +389,11 @@ ellipsoid (see §4), and `up=` offsets that base elevation.
 ### Directory layout
 
 ```
-.                       dependency-free core (reader, IR, math layer)
+.                       dependency-free core (reader/writer, IR, math layer)
+GenericInputStream.*    input iterators + InputStream + InputUserData
+GenericOutputStream.*   output iterators + OutputStream + OutputUserData
+GenericReader.*         read entry points      GenericWriter.*  write entry points
+SceneIR.*               neutral IR + ISceneBuilder replay
 generic_osg/            one wrapper per osg core class
 generic_osgterrain/     osgTerrain      generic_osganimation/  osgAnimation
 generic_osgparticle/    osgParticle     generic_osgvolume/     osgVolume
@@ -333,7 +415,11 @@ Every osg library shipped with OpenSceneGraph has been ported this way: create
 `OpenSceneGraph/src/osgWrappers/serializers/osg<lib>/`, include
 `GenericReserializer.h`, turn the `read*` functions into the
 `ud.add("setXxx", ...)` form, drop the `check*`/`write*` helpers, then add the
-directory to the library sources in `CMakeLists.txt`.
+directory to the library sources in `CMakeLists.txt`.  The write-side port is
+incremental: keep `read*`, re-add `write*` where needed and register it with
+`ADD_USER_WRITER` (or `ADD_USER_WRITER_IF` when the original `check*` function
+should suppress unset values).  `reserializing_write_test` lists the properties
+that still miss a writer.
 
 ---
 

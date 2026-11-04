@@ -204,6 +204,14 @@ bool readSceneIR(const std::string& filename, SceneIR& ir, bool forceAscii = fal
 // where there is no filesystem to open by name).
 bool readSceneIR(std::istream& fin, SceneIR& ir, bool forceAscii = false);
 
+// Write the IR back to .osgt (ascii=true) or .osgb. Defined in GenericWriter.cpp;
+// declared here so adapters already using readSceneIR can round-trip without
+// pulling in the mini-osg math layer.
+bool writeSceneIR(const std::string& filename, const SceneIR& ir,
+                  bool ascii = false, int objectIndex = -1);
+bool writeSceneIR(std::ostream& fout, const SceneIR& ir,
+                  bool ascii = false, int objectIndex = -1);
+
 }
 
 #endif

@@ -29,7 +29,9 @@ endforeach()
 add_library(osgVerseGenericReserializer STATIC
     GenericReserializer.cpp
     GenericInputStream.cpp
+    GenericOutputStream.cpp
     GenericReader.cpp
+    GenericWriter.cpp
     SceneIR.cpp
     SceneIRRecorder.cpp
     ${GENERIC_OSG_SOURCES}
@@ -67,6 +69,9 @@ endfunction()
 # ---------------------------------------------------------------------------
 add_executable(reserializing_test reserializing_test.cpp)
 link_generic_library(reserializing_test)
+
+add_executable(reserializing_write_test reserializing_write_test.cpp)
+link_generic_library(reserializing_write_test)
 
 add_executable(null_integration examples/null/null_integration.cpp)
 link_generic_library(null_integration)
