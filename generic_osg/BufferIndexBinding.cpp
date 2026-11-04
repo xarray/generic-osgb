@@ -22,7 +22,13 @@ static bool write##XXX( osgDB::OutputStream& os, const TYPE& node )\
 }*/
 #define GLsizei_ptrSERIALIZER(TYPE,XXX) \
     static bool read##XXX(InputStream& is, InputUserData& ud)\
-    { unsigned int size = 0; is >> size; ud.add("read" #XXX, size); return true; }
+    { unsigned int size = 0; is >> size; ud.add("read" #XXX, size); return true; } \
+    static bool write##XXX(OutputStream& os, OutputUserData& ud)\
+    { \
+        const IRCommand* cmd = ud.findCommand("read" #XXX); \
+        unsigned int size = (cmd && !cmd->args.empty()) ? (unsigned int)irArgInt(cmd->args[0]) : 0; \
+        os << size << std::endl; return true; \
+    }
 
 GLsizei_ptrSERIALIZER(osg::BufferIndexBinding,Size)
 GLsizei_ptrSERIALIZER(osg::BufferIndexBinding,Offset)
@@ -42,7 +48,9 @@ REGISTER_OBJECT_WRAPPER( BufferIndexBinding,
     ADD_UINT_SERIALIZER(Index, 0);  // _index
 
     ADD_USER_SERIALIZER(Size);
+    ADD_USER_WRITER(Size);
     ADD_USER_SERIALIZER(Offset);
+    ADD_USER_WRITER(Offset);
 }
 }
 namespace wrap_osgUniformBufferBinding

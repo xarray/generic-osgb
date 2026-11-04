@@ -9,6 +9,19 @@ static bool readArea(InputStream& is, InputUserData& ud)
     return true;
 }
 
+static bool writeArea(OutputStream& os, OutputUserData& ud)
+{
+    const IRCommand* cmd = ud.findCommand("setSubImageDimensions");
+    unsigned int x = 0, y = 0, w = 0, h = 0;
+    if (cmd && cmd->args.size() > 3)
+    {
+        x = (unsigned int)irArgInt(cmd->args[0]); y = (unsigned int)irArgInt(cmd->args[1]);
+        w = (unsigned int)irArgInt(cmd->args[2]); h = (unsigned int)irArgInt(cmd->args[3]);
+    }
+    os << x << y << w << h << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( DrawPixels,
                          new osg::DrawPixels,
                          osg::DrawPixels,
@@ -23,4 +36,5 @@ REGISTER_OBJECT_WRAPPER( DrawPixels,
     ADD_IMAGE_SERIALIZER( Image, osg::Image, NULL );  // _image
     ADD_BOOL_SERIALIZER( UseSubImage, false );  // _useSubImage
     ADD_USER_SERIALIZER( Area );  // _offsetX, _offsetY, _width, _height
+    ADD_USER_WRITER( Area );
 }

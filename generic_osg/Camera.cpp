@@ -19,6 +19,7 @@ BEGIN_USER_TABLE(RenderOrder, osg_Camera);
     ADD_USER_VALUE(POST_RENDER);
 END_USER_TABLE()
 USER_READ_FUNC(RenderOrder, readOrderValue)
+USER_WRITE_FUNC(RenderOrder, writeOrderValue)
 
 enum osg_Camera_BufferComponent
 {
@@ -51,6 +52,7 @@ BEGIN_USER_TABLE(BufferComponent, osg_Camera);
     ADD_USER_VALUE(COLOR_BUFFER15);
 END_USER_TABLE()
 USER_READ_FUNC(BufferComponent, readBufferComponent)
+USER_WRITE_FUNC(BufferComponent, writeBufferComponent)
 
 struct osg_Camera_Attachment
 {
@@ -71,6 +73,9 @@ static osg_Camera_Attachment readBufferAttachment(InputStream& is, InputUserData
 {
     osg_Camera_Attachment attachment;
     char type = -1; is >> is.PROPERTY("Type") >> type;
+    // ASCII stores the type as a numeric token, which readChar() returns as
+    // its first digit character.
+    if (type >= '0' && type <= '9') type = (char)(type - '0');
     if (type == 0)
     {
         is >> is.PROPERTY("InternalFormat") >> attachment._internalFormat;
@@ -173,6 +178,95 @@ enum osg_Camera_ImplicitBufferMask
     USE_DISPLAY_SETTINGS_MASK = (~0)
 };
 
+static bool writeRenderOrder(OutputStream& os, OutputUserData& ud)
+{
+    const IRCommand* cmd = ud.findCommand("setRenderOrder");
+    int order = 0, orderNumber = 0;
+    if (cmd && cmd->args.size() > 1)
+    {
+        order = (int)irArgInt(cmd->args[0]);
+        orderNumber = (int)irArgInt(cmd->args[1]);
+    }
+    writeOrderValue(os, order);
+    os << orderNumber << std::endl;
+    return true;
+}
+
+static void writeAttachmentType(OutputStream& os, int type)
+{
+    // Binary stores a single byte (matching readChar), ASCII a numeric token.
+    if (os.isBinary()) os << (char)type;
+    else os << (int)type;
+    os << std::endl;
+}
+
+static bool writeBufferAttachmentMap(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> cmds;
+    ud.findCommands("attach", cmds);
+
+    os << (unsigned int)cmds.size() << os.BEGIN_BRACKET << std::endl;
+    for (size_t i = 0; i < cmds.size(); ++i)
+    {
+        const IRCommand& c = *cmds[i];
+        if (c.args.size() < 2) continue;
+
+        os << os.PROPERTY("Attachment");
+        writeBufferComponent(os, (int)irArgInt(c.args[0]));
+        os << os.BEGIN_BRACKET << std::endl;
+
+        if (c.args.size() == 2)  // attach(component, internalFormat)
+        {
+            os << os.PROPERTY("Type");
+            writeAttachmentType(os, 0);
+            os << os.PROPERTY("InternalFormat")
+               << ObjectGLenum((unsigned int)irArgInt(c.args[1]), "GL") << std::endl;
+        }
+        else if (c.args.size() == 4)  // attach(component, image, samples, colorSamples)
+        {
+            int target = ud.resolve(c.args[1]);
+            os << os.PROPERTY("Type");
+            writeAttachmentType(os, 1);
+            if (os.isBinary())
+            {
+                os << (target >= 0);
+                if (target >= 0) os.writeObject(ud, target);
+            }
+            else if (target >= 0)
+            {
+                os << os.PROPERTY("Image");
+                os.writeObject(ud, target);
+            }
+            os << os.PROPERTY("MultisampleSamples") << (unsigned int)irArgInt(c.args[2]) << std::endl;
+            os << os.PROPERTY("MultisampleColorSamples") << (unsigned int)irArgInt(c.args[3]) << std::endl;
+        }
+        else if (c.args.size() >= 7)  // attach(component, texture, level, face, mipmap, ...)
+        {
+            int target = ud.resolve(c.args[1]);
+            os << os.PROPERTY("Type");
+            writeAttachmentType(os, 2);
+            if (os.isBinary())
+            {
+                os << (target >= 0);
+                if (target >= 0) os.writeObject(ud, target);
+            }
+            else if (target >= 0)
+            {
+                os << os.PROPERTY("Texture");
+                os.writeObject(ud, target);
+            }
+            os << os.PROPERTY("Level") << (unsigned int)irArgInt(c.args[2]) << std::endl;
+            os << os.PROPERTY("Face") << (unsigned int)irArgInt(c.args[3]) << std::endl;
+            os << os.PROPERTY("MipMapGeneration") << (bool)irArgBool(c.args[4]) << std::endl;
+            os << os.PROPERTY("MultisampleSamples") << (unsigned int)irArgInt(c.args[5]) << std::endl;
+            os << os.PROPERTY("MultisampleColorSamples") << (unsigned int)irArgInt(c.args[6]) << std::endl;
+        }
+        os << os.END_BRACKET << std::endl;
+    }
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER(Camera,
                         new osg::Camera,
                         osg::Camera,
@@ -206,6 +300,7 @@ REGISTER_OBJECT_WRAPPER(Camera,
     ADD_MATRIXD_SERIALIZER(ProjectionMatrix, osg::Matrixd());  // _projectionMatrix
     ADD_MATRIXD_SERIALIZER(ViewMatrix, osg::Matrixd());  // _viewMatrix
     ADD_USER_SERIALIZER(RenderOrder);  // _renderOrder & _renderOrderNum
+    ADD_USER_WRITER(RenderOrder);
     ADD_GLENUM_SERIALIZER(DrawBuffer, GLenum, GL_NONE);  // _drawBuffer
     ADD_GLENUM_SERIALIZER(ReadBuffer, GLenum, GL_NONE);  // _readBuffer
 
@@ -218,6 +313,7 @@ REGISTER_OBJECT_WRAPPER(Camera,
     END_ENUM_SERIALIZER();  // _renderTargetImplementation
 
     ADD_USER_SERIALIZER(BufferAttachmentMap);  // _bufferAttachmentMap
+    ADD_USER_WRITER(BufferAttachmentMap);
     ADD_OBJECT_SERIALIZER(InitialDrawCallback, osg_Camera::DrawCallback, NULL);  // _initialDrawCallback
     ADD_OBJECT_SERIALIZER(PreDrawCallback, osg_Camera::DrawCallback, NULL);  // _preDrawCallback
     ADD_OBJECT_SERIALIZER(PostDrawCallback, osg_Camera::DrawCallback, NULL);  // _postDrawCallback

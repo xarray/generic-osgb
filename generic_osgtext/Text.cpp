@@ -25,6 +25,38 @@ static bool readColorGradientCorners(InputStream& is, InputUserData& ud)
     return true;
 }
 
+static bool writeBackdropOffset(OutputStream& os, OutputUserData& ud)
+{
+    const IRCommand* cmd = ud.findCommand("setBackdropOffset");
+    float horizontal = 0.0f, vertical = 0.0f;
+    if (cmd && cmd->args.size() > 1)
+    {
+        horizontal = (float)irArgDouble(cmd->args[0]);
+        vertical = (float)irArgDouble(cmd->args[1]);
+    }
+    os << horizontal << vertical << std::endl;
+    return true;
+}
+
+static bool writeColorGradientCorners(OutputStream& os, OutputUserData& ud)
+{
+    const IRCommand* cmd = ud.findCommand("setColorGradientCorners");
+    osg::Vec4d lt, lb, rb, rt;
+    if (cmd && cmd->args.size() > 3)
+    {
+        lt = irArgVec4d(cmd->args[0]); lb = irArgVec4d(cmd->args[1]);
+        rb = irArgVec4d(cmd->args[2]); rt = irArgVec4d(cmd->args[3]);
+    }
+
+    os << os.BEGIN_BRACKET << std::endl;
+    os << os.PROPERTY("TopLeft") << lt << std::endl;
+    os << os.PROPERTY("BottomLeft") << lb << std::endl;
+    os << os.PROPERTY("BottomRight") << rb << std::endl;
+    os << os.PROPERTY("TopRight") << rt << std::endl;
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( osgText_Text,
                          new osgText::Text,
                          osgText::Text,
@@ -38,33 +70,35 @@ REGISTER_OBJECT_WRAPPER( osgText_Text,
     ADD_VEC4_SERIALIZER( Color, osg::Vec4() );  // _color
 
     BEGIN_ENUM_SERIALIZER( BackdropType, NONE );
-        ADD_ENUM_VALUE( DROP_SHADOW_BOTTOM_RIGHT );
-        ADD_ENUM_VALUE( DROP_SHADOW_CENTER_RIGHT );
-        ADD_ENUM_VALUE( DROP_SHADOW_TOP_RIGHT );
-        ADD_ENUM_VALUE( DROP_SHADOW_BOTTOM_CENTER );
-        ADD_ENUM_VALUE( DROP_SHADOW_TOP_CENTER );
-        ADD_ENUM_VALUE( DROP_SHADOW_BOTTOM_LEFT );
-        ADD_ENUM_VALUE( DROP_SHADOW_CENTER_LEFT );
-        ADD_ENUM_VALUE( DROP_SHADOW_TOP_LEFT );
-        ADD_ENUM_VALUE( OUTLINE );
-        ADD_ENUM_VALUE( NONE );
+        ADD_ENUM_VALUE2( DROP_SHADOW_BOTTOM_RIGHT, 0 );
+        ADD_ENUM_VALUE2( DROP_SHADOW_CENTER_RIGHT, 1 );
+        ADD_ENUM_VALUE2( DROP_SHADOW_TOP_RIGHT, 2 );
+        ADD_ENUM_VALUE2( DROP_SHADOW_BOTTOM_CENTER, 3 );
+        ADD_ENUM_VALUE2( DROP_SHADOW_TOP_CENTER, 4 );
+        ADD_ENUM_VALUE2( DROP_SHADOW_BOTTOM_LEFT, 5 );
+        ADD_ENUM_VALUE2( DROP_SHADOW_CENTER_LEFT, 6 );
+        ADD_ENUM_VALUE2( DROP_SHADOW_TOP_LEFT, 7 );
+        ADD_ENUM_VALUE2( OUTLINE, 8 );
+        ADD_ENUM_VALUE2( NONE, 9 );
     END_ENUM_SERIALIZER();  // _backdropType
 
     BEGIN_ENUM_SERIALIZER( BackdropImplementation, DEPTH_RANGE );
-        ADD_ENUM_VALUE( POLYGON_OFFSET );
-        ADD_ENUM_VALUE( NO_DEPTH_BUFFER );
-        ADD_ENUM_VALUE( DEPTH_RANGE );
-        ADD_ENUM_VALUE( STENCIL_BUFFER );
+        ADD_ENUM_VALUE2( POLYGON_OFFSET, 0 );
+        ADD_ENUM_VALUE2( NO_DEPTH_BUFFER, 1 );
+        ADD_ENUM_VALUE2( DEPTH_RANGE, 2 );
+        ADD_ENUM_VALUE2( STENCIL_BUFFER, 3 );
     END_ENUM_SERIALIZER();  // _backdropImplementation
 
     ADD_USER_SERIALIZER( BackdropOffset );  // _backdropHorizontalOffset, _backdropVerticalOffset
+    ADD_USER_WRITER( BackdropOffset );
     ADD_VEC4_SERIALIZER( BackdropColor, osg::Vec4() );  // _backdropColor
 
     BEGIN_ENUM_SERIALIZER( ColorGradientMode, SOLID );
-        ADD_ENUM_VALUE( SOLID );
-        ADD_ENUM_VALUE( PER_CHARACTER );
-        ADD_ENUM_VALUE( OVERALL );
+        ADD_ENUM_VALUE2( SOLID, 0 );
+        ADD_ENUM_VALUE2( PER_CHARACTER, 1 );
+        ADD_ENUM_VALUE2( OVERALL, 2 );
     END_ENUM_SERIALIZER();  // _colorGradientMode
 
     ADD_USER_SERIALIZER( ColorGradientCorners );  // _colorGradientTopLeft .. _colorGradientBottomRight
+    ADD_USER_WRITER( ColorGradientCorners );
 }

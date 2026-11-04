@@ -65,6 +65,35 @@ const int ID_VEC4UI_ARRAY = 31;
 const int ID_UINT64_ARRAY = 32;
 const int ID_INT64_ARRAY  = 33;
 
+// Map an osg array class name to the legacy compact ArrayType id (the inverse
+// of the internal g_osgArrayClass() used by readArray()).
+inline int osgArrayTypeID(const std::string& className)
+{
+    struct Entry { const char* name; int id; };
+    static const Entry entries[] = {
+        { "osg::ByteArray", ID_BYTE_ARRAY }, { "osg::UByteArray", ID_UBYTE_ARRAY },
+        { "osg::ShortArray", ID_SHORT_ARRAY }, { "osg::UShortArray", ID_USHORT_ARRAY },
+        { "osg::IntArray", ID_INT_ARRAY }, { "osg::UIntArray", ID_UINT_ARRAY },
+        { "osg::FloatArray", ID_FLOAT_ARRAY }, { "osg::DoubleArray", ID_DOUBLE_ARRAY },
+        { "osg::Vec2bArray", ID_VEC2B_ARRAY }, { "osg::Vec3bArray", ID_VEC3B_ARRAY },
+        { "osg::Vec4bArray", ID_VEC4B_ARRAY }, { "osg::Vec4ubArray", ID_VEC4UB_ARRAY },
+        { "osg::Vec2sArray", ID_VEC2S_ARRAY }, { "osg::Vec3sArray", ID_VEC3S_ARRAY },
+        { "osg::Vec4sArray", ID_VEC4S_ARRAY }, { "osg::Vec2Array", ID_VEC2_ARRAY },
+        { "osg::Vec3Array", ID_VEC3_ARRAY }, { "osg::Vec4Array", ID_VEC4_ARRAY },
+        { "osg::Vec2dArray", ID_VEC2D_ARRAY }, { "osg::Vec3dArray", ID_VEC3D_ARRAY },
+        { "osg::Vec4dArray", ID_VEC4D_ARRAY }, { "osg::Vec2ubArray", ID_VEC2UB_ARRAY },
+        { "osg::Vec3ubArray", ID_VEC3UB_ARRAY }, { "osg::Vec2usArray", ID_VEC2US_ARRAY },
+        { "osg::Vec3usArray", ID_VEC3US_ARRAY }, { "osg::Vec4usArray", ID_VEC4US_ARRAY },
+        { "osg::Vec2iArray", ID_VEC2I_ARRAY }, { "osg::Vec3iArray", ID_VEC3I_ARRAY },
+        { "osg::Vec4iArray", ID_VEC4I_ARRAY }, { "osg::Vec2uiArray", ID_VEC2UI_ARRAY },
+        { "osg::Vec3uiArray", ID_VEC3UI_ARRAY }, { "osg::Vec4uiArray", ID_VEC4UI_ARRAY },
+        { "osg::UInt64Array", ID_UINT64_ARRAY }, { "osg::Int64Array", ID_INT64_ARRAY }
+    };
+    for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); ++i)
+        if (className == entries[i].name) return entries[i].id;
+    return -1;
+}
+
 const int ID_DRAWARRAYS          = 50;
 const int ID_DRAWARRAY_LENGTH    = 51;
 const int ID_DRAWELEMENTS_UBYTE  = 52;

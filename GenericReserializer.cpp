@@ -163,7 +163,7 @@ namespace
     // expansion); strip it here. Numeric components are appended to `out`
     // (component count returned), so an engine visitor can rebuild the array.
     int readVectorElement(osgVerse::InputStream& is, const std::string& rawType,
-                          std::vector<double>* out)
+                          std::vector<double>* out, std::vector<std::string>* strs = NULL)
     {
         std::string t = rawType;
         std::string::size_type p = t.rfind("::");
@@ -212,7 +212,7 @@ namespace
         else if (t == "RW_BOUNDINGBOXD" || t == "RW_BOUNDINGBOX") { osg::BoundingBoxd v; is >> v; if (out) { for (int i = 0; i < 3; ++i) out->push_back(v._min._v[i]); for (int i = 0; i < 3; ++i) out->push_back(v._max._v[i]); } return 6; }
         else if (t == "RW_BOUNDINGSPHEREF") { osg::BoundingSpheref v; is >> v; if (out) { for (int i = 0; i < 3; ++i) out->push_back((double)v._center._v[i]); out->push_back((double)v._radius); } return 4; }
         else if (t == "RW_BOUNDINGSPHERED" || t == "RW_BOUNDINGSPHERE") { osg::BoundingSphered v; is >> v; if (out) { for (int i = 0; i < 3; ++i) out->push_back(v._center._v[i]); out->push_back(v._radius); } return 4; }
-        else if (t == "RW_STRING") { std::string v; is.readWrappedString(v); return 0; }
+        else if (t == "RW_STRING") { std::string v; is.readWrappedString(v); if (strs) strs->push_back(v); return 0; }
         else if (t == "RW_GLENUM") { osgVerse::ObjectGLenum v; is >> v; return 0; }
         else
         {
@@ -227,6 +227,7 @@ namespace
         osgVerse::VectorSerializer* vs = dynamic_cast<osgVerse::VectorSerializer*>(&s);
         if (!vs) return false;
         vs->_values.clear(); vs->_numComponents = 0;
+        vs->_stringValues.clear();
 
         unsigned int size = 0;
         is >> size;
@@ -236,7 +237,7 @@ namespace
             if (!is.isBinary()) is >> is.BEGIN_BRACKET;
             for (unsigned int i = 0; i < size; ++i)
             {
-                int n = readVectorElement(is, vs->_type, &vs->_values);
+                int n = readVectorElement(is, vs->_type, &vs->_values, &vs->_stringValues);
                 if (n > 0) vs->_numComponents = n;
                 if (is.getException()) return true;
             }
@@ -762,10 +763,29 @@ namespace
 
     // size [ { element... } ]  (binary: no brackets; ASCII: brackets when size>0)
     bool writeVectorValues(OutputStream& os, const std::string& rawToken,
-                           const std::vector<double>& values, int components)
+                           const std::vector<double>& values, int components,
+                           const std::vector<std::string>* strings = NULL)
     {
         std::string token = normalizedToken(rawToken);
         if (components <= 0) components = tokenComponents(token);
+
+        if (token == "RW_STRING")
+        {
+            unsigned int size = strings ? (unsigned int)strings->size() : 0;
+            os << size;
+            if (size > 0 && !os.isBinary()) os << os.BEGIN_BRACKET << std::endl;
+            for (unsigned int i = 0; i < size; ++i)
+            {
+                os.writeWrappedString((*strings)[i]);
+                if (!os.isBinary()) os << std::endl;
+            }
+            if (!os.isBinary())
+            {
+                if (size > 0) os << os.END_BRACKET << std::endl;
+                else os << std::endl;
+            }
+            return true;
+        }
 
         unsigned int size = 0;
         if (supportedVectorToken(token) && components > 0)
@@ -1163,7 +1183,8 @@ namespace osgVerse
             }
 
             if (!os.isBinary()) os << os.PROPERTY(prop);
-            return writeVectorValues(os, token, data, components);
+            return writeVectorValues(os, token, data, components,
+                                     obj ? &obj->vectorStrings : NULL);
         }
 
         // ---- Primitive value lists (TimeList / ValueList ...) ----

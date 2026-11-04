@@ -125,6 +125,7 @@ struct IRObject
     std::string vectorToken;              // element type token, e.g. "RW_VEC3F"
     int vectorComponents;                 // components per element
     std::vector<double> vectorData;       // flattened element data
+    std::vector<std::string> vectorStrings;  // RW_STRING element payload
 
     IRObject()
         : parent(-1), offset(0), payload(NONE),

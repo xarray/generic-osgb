@@ -485,6 +485,66 @@ unsigned int OutputStream::findOrCreateObjectID(OutputUserData& ud, int index, b
     return id;
 }
 
+void OutputStream::writeCompactArray(OutputUserData& ud, int index)
+{
+    setUserData(&ud);
+    const std::vector<IRObject>& objs = ud.getObjects();
+    if (index < 0 || index >= (int)objs.size()) return;
+
+    const IRObject& obj = objs[index];
+    int typeId = osgArrayTypeID(obj.className);
+    if (typeId < 0)
+    {
+        addWarning("Cannot write compact array of unknown class " + obj.className);
+        return;
+    }
+
+    int comps = obj.vectorComponents;
+    if (comps < 1)
+    {
+        switch (typeId)
+        {
+        case ID_VEC2B_ARRAY: case ID_VEC2S_ARRAY: case ID_VEC2_ARRAY: case ID_VEC2D_ARRAY:
+        case ID_VEC2UB_ARRAY: case ID_VEC2US_ARRAY: case ID_VEC2I_ARRAY: case ID_VEC2UI_ARRAY:
+            comps = 2; break;
+        case ID_VEC3B_ARRAY: case ID_VEC3S_ARRAY: case ID_VEC3_ARRAY: case ID_VEC3D_ARRAY:
+        case ID_VEC3UB_ARRAY: case ID_VEC3US_ARRAY: case ID_VEC3I_ARRAY: case ID_VEC3UI_ARRAY:
+            comps = 3; break;
+        case ID_VEC4B_ARRAY: case ID_VEC4UB_ARRAY: case ID_VEC4S_ARRAY: case ID_VEC4_ARRAY:
+        case ID_VEC4D_ARRAY: case ID_VEC4US_ARRAY: case ID_VEC4I_ARRAY: case ID_VEC4UI_ARRAY:
+            comps = 4; break;
+        default: comps = 1; break;
+        }
+    }
+
+    *this << PROPERTY("ArrayID") << (unsigned int)(index + 1) << std::endl;
+    *this << ObjectProperty("ArrayType", typeId, true) << std::endl;
+
+    const std::vector<double>& values = obj.vectorData;
+    unsigned int count = comps > 0 ? (unsigned int)(values.size() / (size_t)comps) : 0;
+    *this << count << BEGIN_BRACKET << std::endl;
+
+    const bool wide = (typeId == ID_DOUBLE_ARRAY || typeId == ID_VEC2D_ARRAY ||
+                       typeId == ID_VEC3D_ARRAY || typeId == ID_VEC4D_ARRAY ||
+                       typeId == ID_INT64_ARRAY || typeId == ID_UINT64_ARRAY);
+    const bool narrow = (typeId == ID_BYTE_ARRAY || typeId == ID_UBYTE_ARRAY ||
+                         typeId == ID_VEC2B_ARRAY || typeId == ID_VEC3B_ARRAY ||
+                         typeId == ID_VEC4B_ARRAY || typeId == ID_VEC4UB_ARRAY ||
+                         typeId == ID_VEC2UB_ARRAY || typeId == ID_VEC3UB_ARRAY ||
+                         typeId == ID_VEC2S_ARRAY || typeId == ID_VEC3S_ARRAY ||
+                         typeId == ID_VEC4S_ARRAY || typeId == ID_VEC2US_ARRAY ||
+                         typeId == ID_VEC3US_ARRAY || typeId == ID_VEC4US_ARRAY);
+
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        if (wide) *this << values[i];
+        else if (narrow) *this << (short)values[i];
+        else *this << (float)values[i];
+        if (!isBinary()) *this << std::endl;
+    }
+    *this << END_BRACKET << std::endl;
+}
+
 void OutputStream::writeObject(OutputUserData& ud, int index)
 {
     setUserData(&ud);

@@ -16,20 +16,39 @@ static bool readGraphicsSubgraphMap(InputStream& is, InputUserData& ud)
     return true;
 }
 
+static bool writeGraphicsSubgraphMap(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> cmds;
+    ud.findCommands("setGraphicsSubgraph", cmds);
+
+    os << (unsigned int)cmds.size() << os.BEGIN_BRACKET << std::endl;
+    for ( size_t i=0; i<cmds.size(); ++i )
+    {
+        const IRCommand& c = *cmds[i];
+        if (c.args.size() < 2) continue;
+        os << (unsigned int)irArgInt(c.args[0]);
+        os.writeObject(ud, ud.resolve(c.args[1]));
+        if ( !os.isBinary() ) os << std::endl;
+    }
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( Widget,
                          new osgUI::Widget,
                          osgUI::Widget,
                          "osg::Object osg::Node osg::Group osgUI::Widget" )
 {
     BEGIN_ENUM_SERIALIZER( FocusBehaviour, FOCUS_FOLLOWS_POINTER );
-        ADD_ENUM_VALUE( CLICK_TO_FOCUS );
-        ADD_ENUM_VALUE( FOCUS_FOLLOWS_POINTER );
-        ADD_ENUM_VALUE( EVENT_DRIVEN_FOCUS_DISABLED );
+        ADD_ENUM_VALUE2( CLICK_TO_FOCUS, 0 );
+        ADD_ENUM_VALUE2( FOCUS_FOLLOWS_POINTER, 1 );
+        ADD_ENUM_VALUE2( EVENT_DRIVEN_FOCUS_DISABLED, 2 );
     END_ENUM_SERIALIZER();
 
     ADD_BOOL_SERIALIZER(HasEventFocus, false);
 
     ADD_USER_SERIALIZER(GraphicsSubgraphMap);
+    ADD_USER_WRITER(GraphicsSubgraphMap);
     SET_USAGE( osgDB::BaseSerializer::GET_SET_PROPERTY);
 
     ADD_OBJECT_SERIALIZER( WidgetStateSet, osg::StateSet, NULL );

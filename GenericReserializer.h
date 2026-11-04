@@ -151,7 +151,8 @@ namespace osgVerse
     struct ImageSerializer : public WrappableSerializer
     { ObjectTypeAndID _readValue; META_VISITOR() };
     struct VectorSerializer : public BaseSerializer
-    { std::string _type; int _numComponents; std::vector<double> _values; META_VISITOR() };
+    { std::string _type; int _numComponents; std::vector<double> _values;
+      std::vector<std::string> _stringValues; META_VISITOR() };
     struct UserSerializer : public BaseSerializer
     { ReadFunc _reader; WriteFunc _writer; CheckFunc _checker; META_VISITOR() };
     // Note: `_v0` is read scratch (it holds whatever the last read produced),
@@ -337,6 +338,18 @@ namespace osgVerse
 #define ADD_USER_WRITER(PROP) wrapper.addUserSerializerWriter(#PROP, &write##PROP)
 #define ADD_USER_WRITER_IF(PROP, CHECK) wrapper.addUserSerializerWriter(#PROP, &write##PROP, CHECK)
 #define ADD_USER_SERIALIZER_RW(PROP) ADD_USER_SERIALIZER(PROP); ADD_USER_WRITER(PROP)
+
+// Write counterpart of USER_READ_FUNC: binary keeps the integer, ASCII emits
+// the token registered by BEGIN_USER_TABLE/ADD_USER_VALUE.  Use it after the
+// user table declaration:
+//   USER_WRITE_FUNC( Mode, writeModeValue )
+#define USER_WRITE_FUNC(NAME, FUNCNAME) \
+    static void FUNCNAME(osgVerse::OutputStream& os, int value) { \
+        if (os.isBinary()) { os << value; return; } \
+        static bool _registered_##FUNCNAME = \
+            (add_user_value_func_##NAME(&osgVerse::UserLookupTableProxy::get(#NAME)), true); \
+        (void)_registered_##FUNCNAME; \
+        os << osgVerse::UserLookupTableProxy::get(#NAME).value(value); }
 #define ADD_BOOL_SERIALIZER(PROP, DEF) wrapper.addBoolSerializer(#PROP, DEF)
 #define ADD_GLENUM_SERIALIZER(PROP, TYPE, DEF) wrapper.addGLenumSerializer(#PROP, #TYPE, DEF)
 #define ADD_STRING_SERIALIZER(PROP, DEF) wrapper.addStringSerializer(#PROP, DEF)
@@ -391,7 +404,7 @@ namespace osgVerse
 #define ADD_BOUNDINGSPHEREF_SERIALIZER(PROP, DEF) wrapper.addRefValueSerializer<osg::BoundingSpheref>(#PROP, DEF)
 #define ADD_BOUNDINGSPHERED_SERIALIZER(PROP, DEF) wrapper.addRefValueSerializer<osg::BoundingSphered>(#PROP, DEF)
 
-#define ADD_VECTOR_SERIALIZER(PROP, TYPE, ETYPE, NUMONROW) wrapper.addVectorSerializer(#PROP, #TYPE)
+#define ADD_VECTOR_SERIALIZER(PROP, TYPE, ETYPE, NUMONROW) wrapper.addVectorSerializer(#PROP, #ETYPE)
 #define ADD_ISAVECTOR_SERIALIZER(PROP, ETYPE, NUMONROW) wrapper.addVectorSerializer(#PROP, #ETYPE)
 #define ADD_LIST_SERIALIZER(PROP, TYPE) wrapper.addListSerializer<TYPE>(#PROP);
 #define ADD_OBJECT_LIST_SERIALIZER(PROP, TYPE) wrapper.addObjectListSerializer(#PROP, #TYPE);
@@ -442,9 +455,13 @@ namespace osgVerse
     extern void rewrapper_propfunc_##NAME(Rewrapper& wrapper); \
     static osgVerse::RegisterWrapperProxy rewrapper_proxy_##NAME(#CLASS, ASSOCIATES, &rewrapper_propfunc_##NAME); \
     void rewrapper_propfunc_##NAME(Rewrapper& wrapper)
-// Variant used by a few osg wrappers that also pass the class name explicitly.
+// Variant used by wrappers whose serialized class name differs from the C++
+// type (e.g. osg::UpdateCallback vs osg::DrawableUpdateCallback).
 #define REGISTER_OBJECT_WRAPPER2(NAME, CREATEINSTANCE, CLASS, CLASSNAME, ASSOCIATES) \
-    REGISTER_OBJECT_WRAPPER(NAME, CREATEINSTANCE, CLASS, ASSOCIATES)
+    extern "C" void rewrapper_serializer_##NAME(void) {} \
+    extern void rewrapper_propfunc_##NAME(Rewrapper& wrapper); \
+    static osgVerse::RegisterWrapperProxy rewrapper_proxy_##NAME(CLASSNAME, ASSOCIATES, &rewrapper_propfunc_##NAME); \
+    void rewrapper_propfunc_##NAME(Rewrapper& wrapper)
 #define USE_OBJECT_WRAPPER(NAME) \
     extern "C" void rewrapper_serializer_##NAME(void); \
     static osgVerse::RegisterWrapperFunctionProxy rewrapperfunc_proxy_##NAME(rewrapper_serializer_##NAME);

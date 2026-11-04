@@ -13,12 +13,25 @@ static bool readParticleSystem(InputStream& is, InputUserData& ud)
     return true;
 }
 
+static bool writeParticleSystem(OutputStream& os, OutputUserData& ud)
+{
+    const IRCommand* cmd = ud.findCommand("setParticleSystem");
+    int target = (cmd && !cmd->args.empty()) ? ud.resolve(cmd->args[0]) : -1;
+
+    os << os.BEGIN_BRACKET << std::endl;
+    if (os.isBinary()) os << (target >= 0);
+    if (target >= 0) os.writeObject(ud, target);
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( osgParticleParticleEffect,
                          /*new osgParticle::ParticleEffect*/NULL,
                          osgParticle::ParticleEffect,
                          "osg::Object osg::Node osg::Group osgParticle::ParticleEffect" )
 {
     ADD_USER_SERIALIZER( ParticleSystem );  // _particleSystem
+    ADD_USER_WRITER( ParticleSystem );
     ADD_STRING_SERIALIZER( TextureFileName, "" );  // _textureFileName
     ADD_VEC3_SERIALIZER( Position, osg::Vec3() );  // _position
     ADD_FLOAT_SERIALIZER( Scale, 0.0f );  // _scale

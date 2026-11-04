@@ -58,6 +58,7 @@ namespace
             o.vectorToken = s._type;
             o.vectorComponents = s._numComponents;
             o.vectorData = s._values;
+            o.vectorStrings = s._stringValues;
 
             std::vector<IRArg> args;
             _ir.emitCommand(cur, currentProperty().empty() ? "vector" : currentProperty(), args);

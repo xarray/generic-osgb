@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <GenericReserializer.h>
 using namespace osgVerse;
 
@@ -25,6 +26,48 @@ static bool readInfluenceMap(InputStream& is, InputUserData& ud)
     return true;
 }
 
+static bool writeInfluenceMap(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> cmds;
+    ud.findCommands("setVertexInfluence", cmds);
+
+    // Preserve the bone order of first appearance.
+    std::vector<std::string> bones;
+    for ( size_t i=0; i<cmds.size(); ++i )
+    {
+        if (cmds[i]->args.empty()) continue;
+        std::string bone = irArgString(cmds[i]->args[0]);
+        if (std::find(bones.begin(), bones.end(), bone) == bones.end()) bones.push_back(bone);
+    }
+
+    os << (unsigned int)bones.size() << os.BEGIN_BRACKET << std::endl;
+    for ( size_t b=0; b<bones.size(); ++b )
+    {
+        os << os.PROPERTY("VertexInfluence");
+        os.writeWrappedString(bones[b]);
+        os << std::endl;
+
+        std::vector<const IRCommand*> influences;
+        for ( size_t i=0; i<cmds.size(); ++i )
+        {
+            if (!cmds[i]->args.empty() && irArgString(cmds[i]->args[0]) == bones[b])
+                influences.push_back(cmds[i]);
+        }
+
+        os << (unsigned int)influences.size() << os.BEGIN_BRACKET << std::endl;
+        for ( size_t i=0; i<influences.size(); ++i )
+        {
+            const IRCommand& c = *influences[i];
+            int index = c.args.size() > 1 ? (int)irArgInt(c.args[1]) : 0;
+            float weight = c.args.size() > 2 ? (float)irArgDouble(c.args[2]) : 0.0f;
+            os << index << weight << std::endl;
+        }
+        os << os.END_BRACKET << std::endl;
+    }
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( osgAnimation_RigGeometry,
                          new osgAnimation::RigGeometry,
                          osgAnimation::RigGeometry,
@@ -36,6 +79,7 @@ REGISTER_OBJECT_WRAPPER( osgAnimation_RigGeometry,
     }
 
     ADD_USER_SERIALIZER( InfluenceMap );  // _vertexInfluenceMap
+    ADD_USER_WRITER( InfluenceMap );
     ADD_OBJECT_SERIALIZER( SourceGeometry, osg::Geometry, NULL );  // _geometry
 
     {

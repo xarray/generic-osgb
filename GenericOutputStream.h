@@ -260,6 +260,12 @@ public:
     void writeObject(OutputUserData& ud, int index);
     void writeImage(OutputUserData& ud, int index);
 
+    // Write the array at `index` using the legacy compact encoding
+    // (ArrayID + ArrayType + element data).  A handful of wrappers (e.g.
+    // osgText::TextBase::_text, osgAnimation::MorphGeometry sources) read their
+    // arrays through InputStream::readArray(), which expects that encoding.
+    void writeCompactArray(OutputUserData& ud, int index);
+
     // Write the fields declared by a wrapper (associates first, then own fields).
     // Exposed for the serializer write dispatcher (GenericReserializer.cpp).
     void writeObjectFields(OutputUserData& ud, int index, class Rewrapper* wrapper);

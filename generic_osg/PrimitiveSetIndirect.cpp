@@ -42,12 +42,35 @@ static bool readDACommands(InputStream& is, InputUserData& ud)
     return true;
 }
 
+static unsigned int indexedValue(OutputUserData& ud, const char* name, unsigned int index)
+{
+    const IRCommand* cmd = ud.findCommandWithInt(name, index, 0);
+    return (cmd && cmd->args.size() > 1) ? (unsigned int)irArgInt(cmd->args[1]) : 0;
+}
+
+static bool writeDACommands(OutputStream& os, OutputUserData& ud)
+{
+    const IRCommand* resize = ud.findCommand("resize");
+    unsigned int size = (resize && !resize->args.empty())
+                      ? (unsigned int)irArgInt(resize->args[0]) : 0;
+
+    os << size << os.BEGIN_BRACKET << std::endl;
+    for ( unsigned int i=0; i<size; ++i )
+    {
+        os << indexedValue(ud, "count", i) << indexedValue(ud, "instanceCount", i)
+           << indexedValue(ud, "first", i) << indexedValue(ud, "baseInstance", i) << std::endl;
+    }
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( osgDefaultIndirectCommandDrawArrays,
                          new osg::DefaultIndirectCommandDrawArrays,
                          osg::DefaultIndirectCommandDrawArrays,
                          "osg::Object osg::BufferData osg::IndirectCommandDrawArrays osg::DefaultIndirectCommandDrawArrays" )
 {
     ADD_USER_SERIALIZER(DACommands);
+    ADD_USER_WRITER(DACommands);
 }
 }
 namespace DefaultDECommandsArrays {
@@ -68,6 +91,29 @@ static bool readDECommands(InputStream& is, InputUserData& ud)
     return true;
 }
 
+static unsigned int indexedValueDE(OutputUserData& ud, const char* name, unsigned int index)
+{
+    const IRCommand* cmd = ud.findCommandWithInt(name, index, 0);
+    return (cmd && cmd->args.size() > 1) ? (unsigned int)irArgInt(cmd->args[1]) : 0;
+}
+
+static bool writeDECommands(OutputStream& os, OutputUserData& ud)
+{
+    const IRCommand* resize = ud.findCommand("resize");
+    unsigned int size = (resize && !resize->args.empty())
+                      ? (unsigned int)irArgInt(resize->args[0]) : 0;
+
+    os << size << os.BEGIN_BRACKET << std::endl;
+    for ( unsigned int i=0; i<size; ++i )
+    {
+        os << indexedValueDE(ud, "count", i) << indexedValueDE(ud, "instanceCount", i)
+           << indexedValueDE(ud, "firstIndex", i) << indexedValueDE(ud, "baseVertex", i)
+           << indexedValueDE(ud, "baseInstance", i) << std::endl;
+    }
+    os << os.END_BRACKET << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( osgDefaultIndirectCommandDrawElements,
                          new osg::DefaultIndirectCommandDrawElements,
                          osg::DefaultIndirectCommandDrawElements,
@@ -78,6 +124,7 @@ REGISTER_OBJECT_WRAPPER( osgDefaultIndirectCommandDrawElements,
         ADDED_ASSOCIATE("osg::BufferData")
     }
     ADD_USER_SERIALIZER(DECommands);
+    ADD_USER_WRITER(DECommands);
 }
 }
 namespace DrawArraysIndirectWrapper {

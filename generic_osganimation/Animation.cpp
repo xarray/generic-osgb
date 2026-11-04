@@ -3,15 +3,41 @@ using namespace osgVerse;
 
 namespace
 {
-    // Consumes one keyframe value: `components` scalars of 4 (float) or 8 (double)
-    // bytes. The values are not needed by the visitor, only the stream position.
-    void readKeyComponents(InputStream& is, unsigned int components, unsigned int scalarSize)
+    // Channel layout description, shared by the read and write sides.
+    struct ChannelLayout
     {
-        for (unsigned int c = 0; c < components; ++c)
-        {
-            if (scalarSize == 8) { double v; is >> v; }
-            else { float v; is >> v; }
-        }
+        unsigned int components;
+        unsigned int scalarSize;
+        bool cubic;
+        ChannelLayout() : components(1), scalarSize(4), cubic(false) {}
+    };
+
+    ChannelLayout channelLayoutOf(const std::string& type)
+    {
+        ChannelLayout l;
+        if (type == "DoubleStepChannel" || type == "DoubleLinearChannel")
+            l.scalarSize = 8;
+        else if (type == "Vec2StepChannel" || type == "Vec2LinearChannel")
+            l.components = 2;
+        else if (type == "Vec3StepChannel" || type == "Vec3LinearChannel")
+            l.components = 3;
+        else if (type == "Vec4StepChannel" || type == "Vec4LinearChannel")
+            l.components = 4;
+        else if (type == "QuatStepChannel" || type == "QuatSphericalLinearChannel")
+            l.components = 4;
+        else if (type == "MatrixLinearChannel")
+        { l.components = 16; l.scalarSize = 8; }
+        else if (type == "FloatCubicBezierChannel")
+            l.cubic = true;
+        else if (type == "DoubleCubicBezierChannel")
+        { l.cubic = true; l.scalarSize = 8; }
+        else if (type == "Vec2CubicBezierChannel")
+        { l.cubic = true; l.components = 2; }
+        else if (type == "Vec3CubicBezierChannel")
+        { l.cubic = true; l.components = 3; }
+        else if (type == "Vec4CubicBezierChannel")
+        { l.cubic = true; l.components = 4; }
+        return l;
     }
 }
 
@@ -29,29 +55,7 @@ static bool readChannels(InputStream& is, InputUserData& ud)
         is >> is.PROPERTY("Name"); is.readWrappedString(name);
         is >> is.PROPERTY("TargetName"); is.readWrappedString(targetName);
 
-        unsigned int components = 1, scalarSize = 4; bool cubic = false;
-        if (type == "DoubleStepChannel" || type == "DoubleLinearChannel")
-            scalarSize = 8;
-        else if (type == "Vec2StepChannel" || type == "Vec2LinearChannel")
-            components = 2;
-        else if (type == "Vec3StepChannel" || type == "Vec3LinearChannel")
-            components = 3;
-        else if (type == "Vec4StepChannel" || type == "Vec4LinearChannel")
-            components = 4;
-        else if (type == "QuatStepChannel" || type == "QuatSphericalLinearChannel")
-            components = 4;
-        else if (type == "MatrixLinearChannel")
-        { components = 16; scalarSize = 8; }
-        else if (type == "FloatCubicBezierChannel")
-            cubic = true;
-        else if (type == "DoubleCubicBezierChannel")
-        { cubic = true; scalarSize = 8; }
-        else if (type == "Vec2CubicBezierChannel")
-        { cubic = true; components = 2; }
-        else if (type == "Vec3CubicBezierChannel")
-        { cubic = true; components = 3; }
-        else if (type == "Vec4CubicBezierChannel")
-        { cubic = true; components = 4; }
+        ChannelLayout layout = channelLayoutOf(type);
 
         bool hasContainer = false;
         is >> is.PROPERTY("KeyFrameContainer") >> hasContainer;
@@ -61,11 +65,16 @@ static bool readChannels(InputStream& is, InputUserData& ud)
             for (unsigned int k=0; k<count; ++k)
             {
                 double time = 0.0; is >> time;
-                readKeyComponents(is, components, scalarSize);
-                if (cubic)
+                ud.add("addKeyTime", (unsigned int)i, (unsigned int)k, time);
+
+                unsigned int total = layout.components * (layout.cubic ? 3u : 1u);
+                for (unsigned int c=0; c<total; ++c)
                 {
-                    readKeyComponents(is, components, scalarSize);  // control point in
-                    readKeyComponents(is, components, scalarSize);  // control point out
+                    double v = 0.0;
+                    if (layout.scalarSize == 8) { double d; is >> d; v = d; }
+                    else { float f; is >> f; v = f; }
+                    ud.add("addKeyValue", (unsigned int)i, (unsigned int)k,
+                           (unsigned int)c, v);
                 }
             }
             is >> is.END_BRACKET;
@@ -75,6 +84,77 @@ static bool readChannels(InputStream& is, InputUserData& ud)
         ud.add("addChannel", type, name, targetName);
     }
     is >> is.END_BRACKET;
+    return true;
+}
+
+static bool writeChannels(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> channels, times, values;
+    ud.findCommands("addChannel", channels);
+    ud.findCommands("addKeyTime", times);
+    ud.findCommands("addKeyValue", values);
+
+    os << (unsigned int)channels.size() << os.BEGIN_BRACKET << std::endl;
+    for ( size_t i=0; i<channels.size(); ++i )
+    {
+        const IRCommand& ch = *channels[i];
+        std::string type = ch.args.size() > 0 ? irArgString(ch.args[0]) : std::string();
+        std::string name = ch.args.size() > 1 ? irArgString(ch.args[1]) : std::string();
+        std::string targetName = ch.args.size() > 2 ? irArgString(ch.args[2]) : std::string();
+        ChannelLayout layout = channelLayoutOf(type);
+
+        os << os.PROPERTY("Type") << type << os.BEGIN_BRACKET << std::endl;
+        os << os.PROPERTY("Name"); os.writeWrappedString(name); os << std::endl;
+        os << os.PROPERTY("TargetName"); os.writeWrappedString(targetName); os << std::endl;
+
+        unsigned int keyCount = 0;
+        for ( size_t k=0; k<times.size(); ++k )
+        {
+            const IRCommand& c = *times[k];
+            if (c.args.size() > 1 && (unsigned int)irArgInt(c.args[0]) == i)
+                keyCount = std::max(keyCount, (unsigned int)irArgInt(c.args[1]) + 1);
+        }
+
+        os << os.PROPERTY("KeyFrameContainer") << (keyCount > 0);
+        if ( keyCount > 0 )
+        {
+            os << keyCount << os.BEGIN_BRACKET << std::endl;
+            unsigned int total = layout.components * (layout.cubic ? 3u : 1u);
+            for ( unsigned int k=0; k<keyCount; ++k )
+            {
+                double time = 0.0;
+                for ( size_t j=0; j<times.size(); ++j )
+                {
+                    const IRCommand& c = *times[j];
+                    if (c.args.size() > 2 && (unsigned int)irArgInt(c.args[0]) == i &&
+                        (unsigned int)irArgInt(c.args[1]) == k)
+                    { time = irArgDouble(c.args[2]); break; }
+                }
+                os << time;
+
+                for ( unsigned int e=0; e<total; ++e )
+                {
+                    double v = 0.0;
+                    for ( size_t j=0; j<values.size(); ++j )
+                    {
+                        const IRCommand& c = *values[j];
+                        if (c.args.size() > 3 && (unsigned int)irArgInt(c.args[0]) == i &&
+                            (unsigned int)irArgInt(c.args[1]) == k &&
+                            (unsigned int)irArgInt(c.args[2]) == e)
+                        { v = irArgDouble(c.args[3]); break; }
+                    }
+                    if (layout.scalarSize == 8) os << v;
+                    else os << (float)v;
+                }
+                os << std::endl;
+            }
+            os << os.END_BRACKET << std::endl;
+        }
+        else
+            os << std::endl;
+        os << os.END_BRACKET << std::endl;
+    }
+    os << os.END_BRACKET << std::endl;
     return true;
 }
 
@@ -88,11 +168,12 @@ REGISTER_OBJECT_WRAPPER( osgAnimation_Animation,
     ADD_DOUBLE_SERIALIZER( StartTime, 0.0f );  // _startTime
 
     BEGIN_ENUM_SERIALIZER( PlayMode, LOOP );
-        ADD_ENUM_VALUE( ONCE );
-        ADD_ENUM_VALUE( STAY );
-        ADD_ENUM_VALUE( LOOP );
-        ADD_ENUM_VALUE( PPONG );
+        ADD_ENUM_VALUE2( ONCE, 0 );
+        ADD_ENUM_VALUE2( STAY, 1 );
+        ADD_ENUM_VALUE2( LOOP, 2 );
+        ADD_ENUM_VALUE2( PPONG, 3 );
     END_ENUM_SERIALIZER();  // _playmode
 
     ADD_USER_SERIALIZER( Channels );  // _channels
+    ADD_USER_WRITER( Channels );
 }

@@ -18,6 +18,7 @@ BEGIN_USER_TABLE( Mode, osg_PolygonMode );
 END_USER_TABLE()
 
 USER_READ_FUNC( Mode, readModeValue )
+USER_WRITE_FUNC( Mode, writeModeValue )
 
 // _modeFront, _modeBack
 static bool readMode(InputStream& is, InputUserData& ud)
@@ -37,10 +38,39 @@ static bool readMode(InputStream& is, InputUserData& ud)
     return true;
 }
 
+static bool writeMode(OutputStream& os, OutputUserData& ud)
+{
+    std::vector<const IRCommand*> cmds;
+    ud.findCommands("setMode", cmds);
+
+    int front = GL_FILL, back = GL_FILL;
+    bool frontAndBack = false;
+    for (size_t i = 0; i < cmds.size(); ++i)
+    {
+        const IRCommand* cmd = cmds[i];
+        if (cmd->args.size() < 2) continue;
+        int face = (int)irArgInt(cmd->args[0]);
+        int mode = (int)irArgInt(cmd->args[1]);
+        if (face == GL_FRONT_AND_BACK) { front = back = mode; frontAndBack = true; }
+        else if (face == GL_FRONT) front = mode;
+        else if (face == GL_BACK) back = mode;
+    }
+
+    os << os.PROPERTY("UseFrontAndBack") << frontAndBack << std::endl;
+    os << os.PROPERTY("Front");
+    writeModeValue(os, front);
+    os << std::endl;
+    os << os.PROPERTY("Back");
+    writeModeValue(os, back);
+    os << std::endl;
+    return true;
+}
+
 REGISTER_OBJECT_WRAPPER( PolygonMode,
                          new osg::PolygonMode,
                          osg::PolygonMode,
                          "osg::Object osg::StateAttribute osg::PolygonMode" )
 {
     ADD_USER_SERIALIZER( Mode );  // _modeFront, _modeBack
+    ADD_USER_WRITER( Mode );
 }
